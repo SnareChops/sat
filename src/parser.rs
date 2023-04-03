@@ -1,126 +1,83 @@
-use crate::lexer;
+use crate::types;
 
-#[derive(Debug)]
-pub struct ParseError(lexer::Location, String);
-impl ParseError {
-    pub fn message(&self) -> String {
-        format!("ParseError: {}: {}", self.0.to_string(), self.1,)
-    }
-}
+pub type ParseResult = Result<types::Tokens<types::AST>, types::ParseError>;
+pub type ParseBlockResult = Result<(types::Block, types::Tokens<types::Token>), types::ParseError>;
+pub type ParsePartialResult =
+    Result<(types::Tokens<types::AST>, types::Tokens<types::Token>), types::ParseError>;
 
-#[derive(Debug, Clone)]
-pub enum Token {
-    Test(lexer::Location, String, Block),
-}
-
-#[derive(Debug, Clone)]
-pub struct Block(lexer::Location, Tokens);
-
-#[derive(Debug, Clone)]
-pub struct Tokens(Vec<Token>);
-impl Tokens {
-    pub fn new() -> Tokens {
-        Tokens(Vec::<Token>::new())
-    }
-    pub fn init(tokens: &[Token]) -> Tokens {
-        let mut new = Tokens(Vec::<Token>::new());
-        for token in tokens {
-            new.add(token.clone());
-        }
-        return new;
-    }
-    pub fn next(&self) -> Option<(Token, Tokens)> {
-        if let Some((first, rest)) = self.0.split_first() {
-            Some((first.clone(), Tokens(rest.to_vec())))
-        } else {
-            None
-        }
-    }
-
-    pub fn add(&mut self, token: Token) -> &mut Tokens {
-        self.0.push(token);
-        return self;
-    }
-
-    pub fn concat(&mut self, tokens: Tokens) -> &mut Tokens {
-        self.0 = [self.0.clone(), tokens.0].concat();
-        return self;
-    }
-}
-
-pub type ParseResult = Result<Tokens, ParseError>;
-pub type ParseBlockResult = Result<(Block, lexer::Tokens), ParseError>;
-pub type ParsePartialResult = Result<(Tokens, lexer::Tokens), ParseError>;
-
-pub fn parse(mut ast: lexer::Tokens) -> ParseResult {
+pub fn parse(mut tokens: types::Tokens<types::Token>) -> ParseResult {
     // let mut ast = ast;
-    let mut tokens = Tokens::new();
-    while let Some((token, rest)) = ast.next() {
+    let mut ast = types::Tokens::<types::AST>::new();
+    while let Some((token, rest)) = tokens.next() {
         // let (token, rest) = ast.split_at(1);
         match parse_one(token, rest) {
             Err(err) => return Err(err),
             Ok((parsed, rest)) => {
-                tokens.concat(parsed);
-                ast = rest;
+                ast.concat(parsed);
+                tokens = rest;
             }
         }
     }
-    return Ok(tokens);
+    return Ok(ast);
 }
 
-fn parse_block(loc: &lexer::Location, mut ast: lexer::Tokens) -> ParseBlockResult {
-    let mut tokens = Tokens::new();
-    while let Some((token, rest)) = ast.next() {
+fn parse_block(loc: &types::Location, mut tokens: types::Tokens<types::Token>) -> ParseBlockResult {
+    let mut ast = types::Tokens::<types::AST>::new();
+    while let Some((token, rest)) = tokens.next() {
         match token {
-            lexer::Token::BlockEnd(..) => return Ok((Block(loc.clone(), tokens), rest)),
+            types::Token::BlockEnd(..) => return Ok((types::Block(loc.clone(), ast), rest)),
             _ => match parse_one(token, rest) {
                 Err(err) => return Err(err),
                 Ok((parsed, rest)) => {
-                    tokens.concat(parsed);
-                    ast = rest;
+                    ast.concat(parsed);
+                    tokens = rest;
                 }
             },
         }
     }
-    return Err(ParseError(
+    return Err(types::ParseError(
         loc.clone(),
         "Missing end for this block".to_string(),
     ));
 }
 
-fn parse_one(token: lexer::Token, rest: lexer::Tokens) -> ParsePartialResult {
+fn parse_one(token: types::Token, rest: types::Tokens<types::Token>) -> ParsePartialResult {
     match token {
-        lexer::Token::Symbol(loc, val) => parse_symbol(loc, val.to_string(), rest),
-        lexer::Token::String(loc, val) => todo!(),
-        lexer::Token::Number(loc, val) => todo!(),
-        lexer::Token::BlockStart(loc) => todo!(),
-        lexer::Token::BlockEnd(loc) => todo!(),
-        lexer::Token::None => todo!(),
+        types::Token::Symbol(loc, val) => parse_symbol(loc, val.to_string(), rest),
+        types::Token::String(loc, val) => todo!(),
+        types::Token::Number(loc, val) => todo!(),
+        types::Token::BlockStart(loc) => todo!(),
+        types::Token::BlockEnd(loc) => todo!(),
+        types::Token::None => todo!(),
     }
 }
 
-fn parse_symbol(loc: lexer::Location, val: String, ast: lexer::Tokens) -> ParsePartialResult {
+fn parse_symbol(
+    loc: types::Location,
+    val: String,
+    tokens: types::Tokens<types::Token>,
+) -> ParsePartialResult {
     match val.as_str() {
-        "test" => parse_test(loc, ast),
-        _ => Err(ParseError(loc, "Invalid symbol".to_string())),
+        "test" => parse_test(loc, tokens),
+        _ => Err(types::ParseError(loc, "Invalid symbol".to_string())),
     }
 }
 
-fn parse_test(loc: lexer::Location, ast: lexer::Tokens) -> ParsePartialResult {
-    if let Some((lexer::Token::String(.., name), rest)) = ast.next() {
-        if let Some((lexer::Token::BlockStart(..), rest)) = rest.next() {
+fn parse_test(loc: types::Location, tokens: types::Tokens<types::Token>) -> ParsePartialResult {
+    if let Some((types::Token::String(.., name), rest)) = tokens.next() {
+        if let Some((types::Token::BlockStart(..), rest)) = rest.next() {
             match parse_block(&loc, rest) {
                 Err(err) => Err(err),
                 Ok((block, rest)) => {
-                    let mut tokens = Tokens::new();
-                    tokens.add(Token::Test(loc, name, block));
-                    Ok((tokens, rest))
+                    let mut ast = types::Tokens::<types::AST>::new();
+                    ast.add(types::AST::Test(loc, name, block));
+                    Ok((ast, rest))
                 }
             }
         } else {
-            Err(ParseError(loc, "Expected block".to_string()))
+            Err(types::ParseError(loc, "Expected block".to_string()))
         }
     } else {
-        Err(ParseError(loc, "Expected test name".to_string()))
+        Err(types::ParseError(loc, "Expected test name".to_string()))
     }
 }
