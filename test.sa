@@ -1,6 +1,4 @@
 test "simple \"string\" test 2" {
-
+    assert false
 }
 
-test "some name" {
-}

@@ -3,6 +3,7 @@ use std::fs;
 
 mod lexer;
 mod parser;
+mod runner;
 mod types;
 
 fn main() {
@@ -13,6 +14,10 @@ fn main() {
     let program = parser::parse(ast);
     match program {
         Err(e) => eprintln!("{}", e.message()),
-        Ok(p) => println!("{:#?}", p),
+        Ok(p) => {
+            println!("{:#?}", p);
+            let result = runner::run(p);
+            println!("{}", result.message());
+        }
     }
 }

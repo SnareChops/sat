@@ -1,6 +1,6 @@
 use crate::types;
 
-pub fn lex_file(file: String, contents: String) -> types::Tokens<types::Token> {
+pub fn lex_file(file: String, contents: String) -> types::Tokens {
     let mut tokens = types::Tokens::new();
     let mut token = types::Token::None;
     let mut row = 1;
