@@ -1,4 +1,5 @@
 test "simple \"string\" test 2" {
-    assert false
+    bool = true
+    assert bool
 }
 

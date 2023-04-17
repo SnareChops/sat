@@ -30,7 +30,24 @@ pub fn lex_file(file: String, contents: String) -> types::Tokens {
                 types::Token::Number(.., ref mut s) => *s = s.to_owned() + &rune.to_string(),
                 _ => (),
             }
-
+        // =
+        } else if rune == '=' {
+            match token {
+                types::Token::String(.., ref mut s) => *s = s.to_owned() + &rune.to_string(),
+                _ => {
+                    match token {
+                        types::Token::None => (),
+                        _ => {
+                            tokens.add(token);
+                        }
+                    }
+                    tokens.add(types::Token::Symbol(
+                        types::Location(file.to_owned(), row, col),
+                        "=".to_string(),
+                    ));
+                    token = types::Token::None;
+                }
+            }
         // Strings
         } else if rune == '"' {
             match token {
