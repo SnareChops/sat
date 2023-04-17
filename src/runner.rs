@@ -27,12 +27,24 @@ pub fn run_test(
     println!("run_test {location:?} {name} {block:?}");
     let types::Block(loc, expressions, scope) = block;
     let mut result = types::RunResult::ok("Running test ".to_owned() + name);
+    let mut asserts = Vec::<(types::Location, bool)>::new();
     for expression in expressions.iter() {
-        let r = run_expression(location, expression, scope);
+        let r = run_expression(location, expression, scope, &mut asserts);
         match r {
             types::RunResult::Ok(..) => result.merge(&r),
             types::RunResult::Err(..) => return r,
         }
+    }
+    let mut failed = Vec::<String>::new();
+    for (loc, passed) in asserts {
+        if !passed {
+            failed.push(format!("Failed assert: {}", loc.to_string()))
+        }
+    }
+    if failed.len() > 0 {
+        result.merge(&types::RunResult::Ok(failed))
+    } else {
+        result.merge(&types::RunResult::ok("Test passed".to_string()))
     }
     return result;
 }
@@ -41,10 +53,11 @@ pub fn run_expression(
     location: &types::Location,
     expression: &types::Expression,
     scope: &mut types::Scope,
+    asserts: &mut Vec<(types::Location, bool)>,
 ) -> types::RunResult {
     println!("run_expression {location:?} {expression:?} {scope:?}");
     match expression {
-        types::Expression::Assert(loc, expression) => run_assert(loc, &expression, scope),
+        types::Expression::Assert(loc, expression) => run_assert(loc, &expression, scope, asserts),
         types::Expression::Assignment(loc, name, expression) => {
             run_assignment(loc, name, expression, scope)
         }
@@ -67,15 +80,13 @@ pub fn run_assert(
     location: &types::Location,
     expression: &types::Expression,
     scope: &types::Scope,
+    asserts: &mut Vec<(types::Location, bool)>,
 ) -> types::RunResult {
     println!("run_assert {location:?} {expression:?} {scope:?}");
     match expression.eval_in_scope(scope) {
         types::Primitive::Boolean(value) => {
-            if value {
-                types::RunResult::ok("Test passed".to_string())
-            } else {
-                types::RunResult::ok("Expected true, found false".to_string())
-            }
+            asserts.push((location.clone(), value));
+            return types::RunResult::Ok(vec![]);
         }
         _ => types::RunResult::ok("Expected boolean value or expression".to_string()),
     }
