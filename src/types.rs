@@ -1,4 +1,10 @@
-use std::{collections::HashMap, slice};
+use std::{
+    collections::{HashMap, VecDeque},
+    slice::{self, Iter},
+};
+
+pub const ASSIGNMENT: &str = "=";
+pub const EQUALITY: &str = "==";
 
 #[derive(Clone, Debug)]
 pub enum Token {
@@ -8,40 +14,131 @@ pub enum Token {
     Number(Location, String),
     BlockStart(Location),
     BlockEnd(Location),
+    Pipe(Location),
+    Eol(Location),
+}
+impl Token {
+    pub fn loc(&self) -> Option<&Location> {
+        match self {
+            Token::Symbol(loc, ..) => Some(loc),
+            Token::String(loc, ..) => Some(loc),
+            Token::Number(loc, ..) => Some(loc),
+            Token::BlockStart(loc, ..) => Some(loc),
+            Token::BlockEnd(loc, ..) => Some(loc),
+            Token::Pipe(loc, ..) => Some(loc),
+            Token::Eol(loc, ..) => Some(loc),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct Line(pub Vec<Token>, pub Option<Box<Line>>);
+impl Line {
+    pub fn new() -> Line {
+        Line(vec![], None)
+    }
+    pub fn init(tokens: Vec<Token>) -> Line {
+        Line(tokens, None)
+    }
+    pub fn add_token(&mut self, token: Token) {
+        self.0.push(token)
+    }
+    pub fn pipe_line(&mut self, line: Line) {
+        self.1 = Some(Box::new(line))
+    }
+    pub fn find_symbol(&self, symbol: &str) -> Option<usize> {
+        for i in 0..self.0.len() {
+            if let Some(Token::Symbol(.., value)) = self.0.get(i) {
+                if value.as_str() == symbol {
+                    return Some(i);
+                }
+            }
+        }
+        return None;
+    }
+    pub fn loc(&self) -> Location {
+        if let Some(token) = self.0.first() {
+            if let Some(loc) = token.loc() {
+                loc.clone()
+            } else {
+                Location::unknown()
+            }
+        } else {
+            Location::unknown()
+        }
+    }
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
 }
 
 #[derive(Debug, Clone)]
-pub struct Tokens(Vec<Token>);
+pub struct Tokens(VecDeque<Token>);
 impl Tokens {
     pub fn new() -> Tokens {
-        Tokens(Vec::new())
+        Tokens(VecDeque::new())
     }
     pub fn one(value: Token) -> Tokens {
         let mut tokens = Tokens::new();
         tokens.add(value);
         return tokens;
     }
-    pub fn next(&self) -> Option<(Token, Tokens)> {
-        if let Some((first, rest)) = self.0.split_first() {
-            Some((first.clone(), Tokens(rest.to_vec())))
+    pub fn next(&mut self) -> Option<(Token, Tokens)> {
+        if let Some(first) = self.0.pop_front() {
+            Some((first.clone(), Tokens(self.0.to_owned())))
         } else {
             None
         }
     }
-    pub fn add(&mut self, token: Token) -> &mut Tokens {
-        self.0.push(token);
-        return self;
+    pub fn add(&mut self, token: Token) {
+        match token {
+            Token::None => (),
+            _ => self.0.push_back(token),
+        }
     }
-    pub fn concat(&mut self, tokens: Tokens) -> &mut Tokens {
-        self.0 = [self.0.clone(), tokens.0].concat();
-        return self;
+    pub fn concat(&mut self, tokens: Tokens) {
+        let mut clone = self.0.clone();
+        for token in tokens.iter() {
+            clone.push_back(token.to_owned())
+        }
+        self.0 = clone;
+    }
+    pub fn iter(&self) -> std::collections::vec_deque::Iter<Token> {
+        self.0.iter()
+    }
+    pub fn push_front(&mut self, token: Token) {
+        self.0.push_front(token)
+    }
+    pub fn add_symbol(&mut self, location: Location, value: String) {
+        self.add(Token::Symbol(location, value))
+    }
+    pub fn add_string(&mut self, location: Location, value: String) {
+        self.add(Token::String(location, value))
+    }
+    pub fn add_number(&mut self, location: Location, value: String) {
+        self.add(Token::Number(location, value))
+    }
+    pub fn add_block_start(&mut self, location: Location) {
+        self.add(Token::BlockStart(location))
+    }
+    pub fn add_block_end(&mut self, location: Location) {
+        self.add(Token::BlockEnd(location))
+    }
+    pub fn add_pipe(&mut self, location: Location) {
+        self.add(Token::Pipe(location))
+    }
+    pub fn add_eol(&mut self, location: Location) {
+        self.add(Token::Eol(location))
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct Location(pub String, pub i32, pub i32);
-
 impl Location {
+    pub fn unknown() -> Location {
+        Location("".to_string(), 0, 0)
+    }
     pub fn to_string(&self) -> String {
         format!("{}:{}:{}", self.0, self.1, self.2)
     }
@@ -133,13 +230,16 @@ impl Declarations {
 pub enum Primitive {
     Void,
     Boolean(bool),
+    Number(f32),
+    String(String),
 }
 
 #[derive(Debug, Clone)]
 pub enum Expression {
     Primitive(Location, Primitive),
     Assert(Location, Box<Expression>),
-    Assignment(Location, String, Box<Expression>),
+    Assignment(Location, Box<Expression>, Box<Expression>),
+    Equality(Location, Box<Expression>, Box<Expression>),
     Ref(Location, String),
 }
 impl Expression {
@@ -148,10 +248,59 @@ impl Expression {
             Expression::Primitive(.., primitive) => primitive.clone(),
             Expression::Assert(.., expression) => expression.eval_in_scope(scope),
             Expression::Assignment(.., expression) => expression.eval_in_scope(scope),
+            Expression::Equality(.., left, right) => {
+                let l = left.eval_in_scope(scope);
+                let r = right.eval_in_scope(scope);
+                match l {
+                    Primitive::Void => match r {
+                        Primitive::Void => Primitive::Boolean(true),
+                        _ => Primitive::Boolean(false),
+                    },
+                    Primitive::Boolean(a) => match r {
+                        Primitive::Boolean(b) => {
+                            if a == b {
+                                Primitive::Boolean(true)
+                            } else {
+                                Primitive::Boolean(false)
+                            }
+                        }
+                        _ => Primitive::Boolean(false),
+                    },
+                    Primitive::Number(a) => match r {
+                        Primitive::Number(b) => {
+                            if a == b {
+                                Primitive::Boolean(true)
+                            } else {
+                                Primitive::Boolean(false)
+                            }
+                        }
+                        _ => Primitive::Boolean(false),
+                    },
+                    Primitive::String(a) => match r {
+                        Primitive::String(b) => {
+                            if a == b {
+                                Primitive::Boolean(true)
+                            } else {
+                                Primitive::Boolean(false)
+                            }
+                        }
+                        _ => Primitive::Boolean(false),
+                    },
+                }
+            }
             Expression::Ref(.., name) => match scope.get_var(name) {
                 Some(primitive) => primitive.clone(),
                 None => Primitive::Void,
             },
+        }
+    }
+    pub fn loc(&self) -> &Location {
+        match self {
+            Expression::Assert(loc, ..) => loc,
+            Expression::Assignment(loc, ..) => loc,
+            Expression::Equality(loc, ..) => loc,
+            Expression::Primitive(loc, ..) => loc,
+            Expression::Ref(loc, ..) => loc,
         }
     }
 }
@@ -231,7 +380,9 @@ impl Scope {
         }
     }
     pub fn add_var(&mut self, name: &String) {
-        self.vars.insert(name.to_string(), Primitive::Void);
+        if !self.has_var(name) {
+            self.vars.insert(name.to_string(), Primitive::Void);
+        }
     }
     pub fn has_var(&self, name: &String) -> bool {
         self.vars.contains_key(name)

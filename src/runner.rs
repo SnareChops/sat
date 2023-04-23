@@ -1,7 +1,7 @@
 use crate::types;
 
 pub fn run(mut program: types::Program) -> types::RunResult {
-    println!("run {program:?}");
+    println!("run {program:?}\n---");
     let declarations = program.declarations.iter_mut();
     let mut result = types::RunResult::ok("Running tests".to_string());
     for declaration in declarations {
@@ -24,7 +24,7 @@ pub fn run_test(
     name: &String,
     block: &mut types::Block,
 ) -> types::RunResult {
-    println!("run_test {location:?} {name} {block:?}");
+    println!("run_test\n\t{location:?}\n\t{name}\n\t{block:?}\n---");
     let types::Block(loc, expressions, scope) = block;
     let mut result = types::RunResult::ok("Running test ".to_owned() + name);
     let mut asserts = Vec::<(types::Location, bool)>::new();
@@ -55,25 +55,27 @@ pub fn run_expression(
     scope: &mut types::Scope,
     asserts: &mut Vec<(types::Location, bool)>,
 ) -> types::RunResult {
-    println!("run_expression {location:?} {expression:?} {scope:?}");
+    println!("run_expression\n\t{location:?}\n\t{expression:?}\n\t{scope:?}\n---");
     match expression {
         types::Expression::Assert(loc, expression) => run_assert(loc, &expression, scope, asserts),
-        types::Expression::Assignment(loc, name, expression) => {
-            run_assignment(loc, name, expression, scope)
-        }
+        types::Expression::Assignment(loc, left, right) => run_assignment(loc, left, right, scope),
         _ => types::RunResult::Ok(vec![]),
     }
 }
 
 pub fn run_assignment(
     location: &types::Location,
-    name: &String,
-    expression: &types::Expression,
+    left: &types::Expression,
+    right: &types::Expression,
     scope: &mut types::Scope,
 ) -> types::RunResult {
-    println!("run_assignment {location:?} {name:?} {expression:?} {scope:?}");
-    scope.set_var(name, &expression.eval_in_scope(scope));
-    types::RunResult::Ok(vec![])
+    println!("run_assignment\n\t{location:?}\n\t{left:?}\n\t{right:?}\n\t{scope:?}\n---");
+    if let types::Expression::Ref(.., name) = left {
+        scope.set_var(name, &right.eval_in_scope(scope));
+        types::RunResult::Ok(vec![])
+    } else {
+        types::RunResult::Err(left.loc().clone(), "Invalid assignment".to_string())
+    }
 }
 
 pub fn run_assert(
@@ -82,7 +84,7 @@ pub fn run_assert(
     scope: &types::Scope,
     asserts: &mut Vec<(types::Location, bool)>,
 ) -> types::RunResult {
-    println!("run_assert {location:?} {expression:?} {scope:?}");
+    println!("run_assert\n\t{location:?}\n\t{expression:?}\n\t{scope:?}\n---");
     match expression.eval_in_scope(scope) {
         types::Primitive::Boolean(value) => {
             asserts.push((location.clone(), value));

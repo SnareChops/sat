@@ -1,6 +1,8 @@
-test "simple \"string\" test 2" {
+test "simple test" {
+    assert : true
     bool = true
-    assert bool
-    assert false
-}
+    assert : bool
 
+    num = 1
+    assert : num == 1
+}
