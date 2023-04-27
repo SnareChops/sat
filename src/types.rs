@@ -12,6 +12,7 @@ pub enum Token {
     Symbol(Location, String),
     String(Location, String),
     Number(Location, String),
+    Block(Location, Tokens),
     BlockStart(Location),
     BlockEnd(Location),
     Pipe(Location),
@@ -107,6 +108,9 @@ impl Tokens {
     pub fn iter(&self) -> std::collections::vec_deque::Iter<Token> {
         self.0.iter()
     }
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
     pub fn push_front(&mut self, token: Token) {
         self.0.push_front(token)
     }
@@ -134,7 +138,7 @@ impl Tokens {
 }
 
 #[derive(Debug, Clone)]
-pub struct Location(pub String, pub i32, pub i32);
+pub struct Location(pub String, pub usize, pub usize);
 impl Location {
     pub fn unknown() -> Location {
         Location("".to_string(), 0, 0)
