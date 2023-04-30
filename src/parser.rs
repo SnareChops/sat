@@ -58,17 +58,18 @@ fn parse_test(
 ) -> ParseTypeResult<types::Declaration> {
     println!("parse_test\n\t{loc:?}\n\t{tokens:?}\n---");
     if let Some((types::Token::String(.., name), rest)) = tokens.next() {
-        if let Some((types::Token::BlockStart(..), mut rest)) = rest.to_owned().next() {
-            match parse_block(&loc, &mut rest) {
-                ParseTypeResult::Err(loc, err) => ParseTypeResult::Err(loc, err),
-                ParseTypeResult::Ok(block, rest) => ParseTypeResult::<types::Declaration>::Ok(
-                    types::Declaration::Test(loc.clone(), name, block),
-                    rest,
-                ),
-            }
-        } else {
-            ParseTypeResult::Err(loc.clone(), "Expected block".to_string())
-        }
+        todo!()
+        // if let Some((types::Token::BlockStart(..), mut rest)) = rest.to_owned().next() {
+        //     match parse_block(&loc, &mut rest) {
+        //         ParseTypeResult::Err(loc, err) => ParseTypeResult::Err(loc, err),
+        //         ParseTypeResult::Ok(block, rest) => ParseTypeResult::<types::Declaration>::Ok(
+        //             types::Declaration::Test(loc.clone(), name, block),
+        //             rest,
+        //         ),
+        //     }
+        // } else {
+        //     ParseTypeResult::Err(loc.clone(), "Expected block".to_string())
+        // }
     } else {
         ParseTypeResult::Err(loc.clone(), "Expected test name".to_string())
     }
@@ -82,22 +83,23 @@ fn parse_block(
     let mut block = types::Block::new(location.clone());
     while let Some((token, rest)) = &tokens.next() {
         println!("token {token:?}");
-        match token {
-            types::Token::BlockEnd(..) => {
-                return ParseTypeResult::<types::Block>::Ok(block, rest.clone())
-            }
-            _ => {
-                tokens.push_front(token.clone());
-                match parse_lines(tokens, &mut block.2) {
-                    ParseTypeResult::Err(loc, err) => return ParseTypeResult::Err(loc, err),
-                    ParseTypeResult::Ok(Some(parsed), rest) => {
-                        block.add_expression(parsed);
-                        *tokens = rest.clone();
-                    }
-                    _ => (),
-                }
-            }
-        }
+        todo!()
+        // match token {
+        //     types::Token::BlockEnd(..) => {
+        //         return ParseTypeResult::<types::Block>::Ok(block, rest.clone())
+        //     }
+        //     _ => {
+        //         tokens.push_front(token.clone());
+        //         match parse_lines(tokens, &mut block.2) {
+        //             ParseTypeResult::Err(loc, err) => return ParseTypeResult::Err(loc, err),
+        //             ParseTypeResult::Ok(Some(parsed), rest) => {
+        //                 block.add_expression(parsed);
+        //                 *tokens = rest.clone();
+        //             }
+        //             _ => (),
+        //         }
+        //     }
+        // }
     }
     return ParseTypeResult::Err(location.clone(), "Missing end for this block".to_string());
 }

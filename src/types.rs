@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, VecDeque},
-    slice::{self, Iter},
+    slice,
 };
 
 pub const ASSIGNMENT: &str = "=";
@@ -13,8 +13,9 @@ pub enum Token {
     String(Location, String),
     Number(Location, String),
     Block(Location, Tokens),
-    BlockStart(Location),
-    BlockEnd(Location),
+    Object(Location, HashMap<String, Tokens>),
+    Assign(Location),
+    Equality(Location),
     Pipe(Location),
     Eol(Location),
 }
@@ -24,10 +25,12 @@ impl Token {
             Token::Symbol(loc, ..) => Some(loc),
             Token::String(loc, ..) => Some(loc),
             Token::Number(loc, ..) => Some(loc),
-            Token::BlockStart(loc, ..) => Some(loc),
-            Token::BlockEnd(loc, ..) => Some(loc),
-            Token::Pipe(loc, ..) => Some(loc),
-            Token::Eol(loc, ..) => Some(loc),
+            Token::Block(loc, ..) => Some(loc),
+            Token::Object(loc, ..) => Some(loc),
+            Token::Assign(loc) => Some(loc),
+            Token::Equality(loc) => Some(loc),
+            Token::Pipe(loc) => Some(loc),
+            Token::Eol(loc) => Some(loc),
             _ => None,
         }
     }
@@ -92,6 +95,9 @@ impl Tokens {
             None
         }
     }
+    pub fn next_new(&mut self) -> Option<Token> {
+        self.0.pop_front()
+    }
     pub fn add(&mut self, token: Token) {
         match token {
             Token::None => (),
@@ -111,6 +117,9 @@ impl Tokens {
     pub fn len(&self) -> usize {
         self.0.len()
     }
+    pub fn last(&self) -> Option<&Token> {
+        self.0.get(self.0.len() - 1)
+    }
     pub fn push_front(&mut self, token: Token) {
         self.0.push_front(token)
     }
@@ -122,12 +131,6 @@ impl Tokens {
     }
     pub fn add_number(&mut self, location: Location, value: String) {
         self.add(Token::Number(location, value))
-    }
-    pub fn add_block_start(&mut self, location: Location) {
-        self.add(Token::BlockStart(location))
-    }
-    pub fn add_block_end(&mut self, location: Location) {
-        self.add(Token::BlockEnd(location))
     }
     pub fn add_pipe(&mut self, location: Location) {
         self.add(Token::Pipe(location))
