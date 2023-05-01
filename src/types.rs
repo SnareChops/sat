@@ -14,6 +14,7 @@ pub enum Token {
     Number(Location, String),
     Block(Location, Tokens),
     Object(Location, HashMap<String, Tokens>),
+    Array(Location, Vec<Tokens>),
     Assign(Location),
     Equality(Location),
     Pipe(Location),

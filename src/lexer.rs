@@ -105,6 +105,13 @@ fn lex_until(mut reader: &mut Reader, until: Option<Vec<char>>) -> (types::Token
                     }
                 }
             }
+        // [
+        } else if rune == '[' {
+            if let Some(token) = lex_array(&mut reader) {
+                tokens.add(token)
+            } else {
+                todo!()
+            }
         // Letters
         } else if rune.is_alphabetic() {
             if let Some(token) = lex_symbol(&mut reader) {
@@ -188,6 +195,26 @@ fn lex_object(reader: &mut Reader) -> Option<types::Token> {
                     todo!()
                 }
             } else if rune.is_whitespace() {
+                reader.take();
+            }
+        } else {
+            todo!()
+        }
+    }
+}
+
+fn lex_array(reader: &mut Reader) -> Option<types::Token> {
+    let loc = reader.loc();
+    let mut array = Vec::<types::Tokens>::new();
+    reader.take();
+    loop {
+        let (tokens, ended_with) = lex_until(reader, Some(vec![',', ']']));
+        array.push(tokens);
+        if let Some(char) = ended_with {
+            if char == ']' {
+                return Some(types::Token::Array(loc, array));
+            }
+            if char == ',' {
                 reader.take();
             }
         } else {
@@ -434,6 +461,115 @@ fn test_object() {
                             }
                         }
                         _ => assert!(false, "expeted object"),
+                    }
+                }
+                _ => assert!(false, "expected assign"),
+            }
+        }
+        _ => assert!(false, "expected symbol"),
+    }
+}
+
+#[test]
+fn test_array() {
+    let file_name = "file";
+    let result = lex_file(
+        file_name.to_string(),
+        "array = [\"haha\", 45.6, false, true == true]".to_string(),
+    );
+    assert!(result.len() == 3);
+    let mut iter = result.iter();
+    match iter.next() {
+        Some(types::Token::Symbol(types::Location(file, row, col), symbol)) => {
+            assert_eq!(*file, file_name.to_string(), "expected file name");
+            assert_eq!(*row, 1, "expected row number");
+            assert_eq!(*col, 1, "expected col number");
+            assert_eq!(symbol, "array", "expected symbol value");
+            match iter.next() {
+                Some(types::Token::Assign(types::Location(file, row, col))) => {
+                    assert_eq!(*file, file_name.to_string(), "expected file name");
+                    assert_eq!(*row, 1, "expected row number");
+                    assert_eq!(*col, 7, "expected col number");
+                    match iter.next() {
+                        Some(types::Token::Array(types::Location(file, row, col), items)) => {
+                            assert_eq!(*file, file_name.to_string(), "expected file name");
+                            assert_eq!(*row, 1, "expected row number");
+                            assert_eq!(*col, 9, "expected col number");
+                            assert_eq!(items.len(), 4, "expected 4 items in the array");
+                            let mut haha = items.get(0).unwrap().clone();
+                            match haha.next_new() {
+                                Some(types::Token::String(
+                                    types::Location(file, row, col),
+                                    value,
+                                )) => {
+                                    assert_eq!(*file, file_name.to_string(), "expected file name");
+                                    assert_eq!(row, 1, "expected row number");
+                                    assert_eq!(col, 10, "expected col number");
+                                    assert_eq!(value, "haha", "expected string value");
+                                }
+                                _ => assert!(false, "expected string"),
+                            }
+                            let mut num = items.get(1).unwrap().clone();
+                            match num.next_new() {
+                                Some(types::Token::Number(
+                                    types::Location(file, row, col),
+                                    value,
+                                )) => {
+                                    assert_eq!(*file, file_name.to_string(), "expected file name");
+                                    assert_eq!(row, 1, "expected row number");
+                                    assert_eq!(col, 18, "expected col number");
+                                    assert_eq!(value, "45.6", "expected number value");
+                                }
+                                _ => assert!(false, "expected number"),
+                            }
+                            let mut fal = items.get(2).unwrap().clone();
+                            match fal.next_new() {
+                                Some(types::Token::Symbol(
+                                    types::Location(file, row, col),
+                                    value,
+                                )) => {
+                                    assert_eq!(*file, file_name.to_string(), "expected file name");
+                                    assert_eq!(row, 1, "expected row number");
+                                    assert_eq!(col, 24, "expected col number");
+                                    assert_eq!(value, "false", "expected symbol value");
+                                }
+                                _ => assert!(false, "expected symbol"),
+                            }
+                            let mut cond = items.get(3).unwrap().clone();
+                            match cond.next_new() {
+                                Some(types::Token::Symbol(
+                                    types::Location(file, row, col),
+                                    value,
+                                )) => {
+                                    assert_eq!(*file, file_name.to_string(), "expected file name");
+                                    assert_eq!(row, 1, "expected row number");
+                                    assert_eq!(col, 31, "expected col number");
+                                    assert_eq!(value, "true", "expected symbol value");
+                                }
+                                _ => assert!(false, "expected symbol"),
+                            }
+                            match cond.next_new() {
+                                Some(types::Token::Equality(types::Location(file, row, col))) => {
+                                    assert_eq!(*file, file_name.to_string(), "expected file name");
+                                    assert_eq!(row, 1, "expected row number");
+                                    assert_eq!(col, 36, "expected col number");
+                                }
+                                _ => assert!(false, "expected equality"),
+                            }
+                            match cond.next_new() {
+                                Some(types::Token::Symbol(
+                                    types::Location(file, row, col),
+                                    value,
+                                )) => {
+                                    assert_eq!(*file, file_name.to_string(), "expected file name");
+                                    assert_eq!(row, 1, "expected row number");
+                                    assert_eq!(col, 39, "expected col number");
+                                    assert_eq!(value, "true", "expected symbol value");
+                                }
+                                _ => assert!(false, "expected symbol"),
+                            }
+                        }
+                        _ => assert!(false, "expected array"),
                     }
                 }
                 _ => assert!(false, "expected assign"),
