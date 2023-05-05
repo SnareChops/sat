@@ -1,6 +1,8 @@
+use crate::parser;
 use crate::types;
 use std::collections::{HashMap, VecDeque};
 
+#[derive(Debug)]
 struct Reader {
     file: String,
     row: usize,
@@ -41,14 +43,16 @@ impl Reader {
     }
 }
 
-pub fn lex_file(file: String, contents: String) -> types::Tokens {
+pub fn lex_file(file: String, contents: String) -> parser::Tokens {
+    println!("lex_file\n\t{file}\n\t{contents}\n---");
     let mut reader = Reader::new(file, contents);
     let (tokens, ..) = lex_until(&mut reader, None);
     return tokens;
 }
 
-fn lex_until(mut reader: &mut Reader, until: Option<Vec<char>>) -> (types::Tokens, Option<char>) {
-    let mut tokens = types::Tokens::new();
+fn lex_until(mut reader: &mut Reader, until: Option<Vec<char>>) -> (parser::Tokens, Option<char>) {
+    println!("lex_until\n\t{until:?}\n\t{reader:?}\n---");
+    let mut tokens = parser::Tokens::new();
     while let Some(rune) = reader.peek() {
         if let Some(ref vec) = until {
             if vec.contains(&rune) {
@@ -56,28 +60,27 @@ fn lex_until(mut reader: &mut Reader, until: Option<Vec<char>>) -> (types::Token
             }
         }
         // \n
-        if rune == '\n' {
-            tokens.add_eol(reader.loc());
+        if rune == '\n' || rune == ';' {
+            tokens.add(parser::Token::Eol(reader.loc()));
             reader.take();
         // :
         } else if rune == ':' {
-            tokens.add_pipe(reader.loc());
             reader.take();
-        } else if rune == ';' {
-            tokens.add_eol(reader.loc());
-            reader.take();
+            if let Some(token) = lex_pipe(reader) {
+                tokens.add(token);
+            }
         // =
         } else if rune == '=' {
             let loc = reader.loc();
             reader.take();
             if let Some(c) = reader.peek() {
                 if c == '=' {
-                    tokens.add(types::Token::Equality(loc));
+                    tokens.add(parser::Token::Special(loc, parser::Special::Equality));
                     reader.take();
                     continue;
                 }
             }
-            tokens.add(types::Token::Assign(loc));
+            tokens.add(parser::Token::Special(loc, parser::Special::Assign));
         // "
         } else if rune == '"' {
             if let Some(token) = lex_string(&mut reader) {
@@ -89,7 +92,9 @@ fn lex_until(mut reader: &mut Reader, until: Option<Vec<char>>) -> (types::Token
         } else if rune == '{' {
             match tokens.last() {
                 Some(
-                    types::Token::Assign(..) | types::Token::Equality(..) | types::Token::Pipe(..),
+                    parser::Token::Special(.., parser::Special::Assign)
+                    | parser::Token::Special(.., parser::Special::Equality)
+                    | parser::Token::Pipe(..),
                 ) => {
                     if let Some(token) = lex_object(&mut reader) {
                         tokens.add(token)
@@ -133,7 +138,8 @@ fn lex_until(mut reader: &mut Reader, until: Option<Vec<char>>) -> (types::Token
     return (tokens, None);
 }
 
-fn lex_string(reader: &mut Reader) -> Option<types::Token> {
+fn lex_string(reader: &mut Reader) -> Option<parser::Token> {
+    println!("lex_string\n\t{reader:?}\n---");
     let loc = reader.loc();
     let mut result = "".to_string();
     reader.take(); // Consume the '"'
@@ -148,9 +154,9 @@ fn lex_string(reader: &mut Reader) -> Option<types::Token> {
             }
             Some('"') => {
                 reader.take();
-                return Some(types::Token::String(loc, result));
+                return Some(parser::Token::String(loc, result));
             }
-            None => return Some(types::Token::String(loc, result)),
+            None => return Some(parser::Token::String(loc, result)),
             Some(val) => {
                 reader.take();
                 result.push(val)
@@ -159,21 +165,73 @@ fn lex_string(reader: &mut Reader) -> Option<types::Token> {
     }
 }
 
-fn lex_object(reader: &mut Reader) -> Option<types::Token> {
+fn lex_symbol(reader: &mut Reader) -> Option<parser::Token> {
+    println!("lex_symbol\n\t{reader:?}\n---");
     let loc = reader.loc();
-    let mut object = HashMap::<String, types::Tokens>::new();
+    let mut symbol = "".to_string();
+    loop {
+        match reader.peek().clone() {
+            Some(rune) => {
+                if !rune.is_alphanumeric() {
+                    return Some(parser::Token::Symbol(loc, symbol));
+                }
+                reader.take();
+                symbol.push(rune);
+            }
+            None => return Some(parser::Token::Symbol(loc, symbol)),
+        }
+    }
+}
+
+fn lex_number(reader: &mut Reader) -> Option<parser::Token> {
+    println!("lex_number\n\t{reader:?}\n---");
+    let loc = reader.loc();
+    let mut number = "".to_string();
+    loop {
+        let next = reader.peek();
+        match next {
+            Some(rune) => {
+                if rune.is_numeric() {
+                    reader.take();
+                    number.push(rune)
+                } else if rune == '_' {
+                    reader.take();
+                    continue;
+                } else if rune == '.' {
+                    reader.take();
+                    number.push(rune)
+                } else {
+                    return Some(parser::Token::Number(loc, number));
+                }
+            }
+            None => return Some(parser::Token::Number(loc, number)),
+        }
+    }
+}
+
+fn lex_pipe(reader: &mut Reader) -> Option<parser::Token> {
+    println!("lex_pipe\n\t{reader:?}\n---");
+    let loc = reader.loc();
+    let (tokens, ..) = lex_until(reader, Some(vec![';', '\n']));
+    Some(parser::Token::Pipe(loc, tokens))
+}
+
+fn lex_object(reader: &mut Reader) -> Option<parser::Token> {
+    println!("lex_object\n\t{reader:?}\n---");
+    let loc = reader.loc();
+    let mut object = HashMap::<String, parser::Tokens>::new();
     let mut prop: Option<String> = None;
     reader.take();
     loop {
         if let Some(rune) = reader.peek() {
             if rune == '"' {
-                if let Some(types::Token::String(.., name)) = lex_string(reader) {
+                if let Some(parser::Token::String(.., name)) = lex_string(reader) {
                     prop = Some(name);
                 } else {
                     todo!()
                 }
             } else if rune.is_alphanumeric() {
-                if let Some(types::Token::Symbol(.., name)) = lex_symbol(reader) {
+                if let Some(parser::Token::Symbol(.., name)) = lex_symbol(reader) {
                     prop = Some(name);
                 } else {
                     todo!()
@@ -185,7 +243,7 @@ fn lex_object(reader: &mut Reader) -> Option<types::Token> {
                     object.insert(key.to_string(), tokens);
                     if let Some(char) = ended_with {
                         if char == '}' {
-                            return Some(types::Token::Object(loc, object));
+                            return Some(parser::Token::Object(loc, object));
                         }
                         if char == ',' {
                             reader.take();
@@ -203,16 +261,17 @@ fn lex_object(reader: &mut Reader) -> Option<types::Token> {
     }
 }
 
-fn lex_array(reader: &mut Reader) -> Option<types::Token> {
+fn lex_array(reader: &mut Reader) -> Option<parser::Token> {
+    println!("lex_array\n\t{reader:?}\n---");
     let loc = reader.loc();
-    let mut array = Vec::<types::Tokens>::new();
+    let mut array = Vec::<parser::Tokens>::new();
     reader.take();
     loop {
         let (tokens, ended_with) = lex_until(reader, Some(vec![',', ']']));
         array.push(tokens);
         if let Some(char) = ended_with {
             if char == ']' {
-                return Some(types::Token::Array(loc, array));
+                return Some(parser::Token::Array(loc, array));
             }
             if char == ',' {
                 reader.take();
@@ -223,81 +282,52 @@ fn lex_array(reader: &mut Reader) -> Option<types::Token> {
     }
 }
 
-fn lex_block(reader: &mut Reader) -> Option<types::Token> {
+fn lex_block(reader: &mut Reader) -> Option<parser::Token> {
+    println!("lex_block\n\t{reader:?}\n---");
     let loc = reader.loc();
     reader.take();
-    let (tokens, ..) = lex_until(reader, Some(vec!['}']));
-    Some(types::Token::Block(loc, tokens))
-}
-
-fn lex_symbol(reader: &mut Reader) -> Option<types::Token> {
-    let loc = reader.loc();
-    let mut symbol = "".to_string();
+    let mut block = Vec::<parser::Tokens>::new();
     loop {
-        match reader.peek().clone() {
-            Some(rune) => {
-                if !rune.is_alphanumeric() {
-                    return Some(types::Token::Symbol(loc, symbol));
-                }
-                reader.take();
-                symbol.push(rune);
+        let (tokens, ended_with) = lex_until(reader, Some(vec!['\n', ';', '}']));
+        println!("tokens {tokens:?}");
+        if let Some(ending) = ended_with {
+            reader.take();
+            if tokens.len() > 0 {
+                block.push(tokens);
             }
-            None => return Some(types::Token::Symbol(loc, symbol)),
-        }
-    }
-}
-
-fn lex_number(reader: &mut Reader) -> Option<types::Token> {
-    let loc = reader.loc();
-    let mut number = "".to_string();
-    loop {
-        let next = reader.peek();
-        match next {
-            Some(rune) => {
-                if rune.is_numeric() {
-                    reader.take();
-                    number.push(rune)
-                } else if rune == '_' {
-                    reader.take();
-                    continue;
-                } else if rune == '.' {
-                    reader.take();
-                    number.push(rune)
-                } else {
-                    return Some(types::Token::Number(loc, number));
-                }
+            if ending == '}' {
+                return Some(parser::Token::Block(loc, block));
             }
-            None => return Some(types::Token::Number(loc, number)),
+        } else {
+            todo!()
         }
     }
 }
 
 #[test]
 fn test_block() {
-    let result = lex_file("file".to_string(), " test { contents }".to_string());
-    let tokens: Vec<&types::Token> = result.iter().collect();
-    assert!(tokens.len() == 2, "expected 2 tokens");
-    match tokens.get(0) {
-        Some(types::Token::Symbol(types::Location(file, row, col), value)) => {
+    let mut result = lex_file("file".to_string(), " test { contents }".to_string());
+    assert!(result.len() == 2, "expected 2 tokens");
+    match result.take() {
+        Some(parser::Token::Symbol(types::Location(file, row, col), value)) => {
             assert!(*file == "file".to_string(), "expected file name");
-            assert!(*row == 1, "expected row number");
-            assert!(*col == 2, "expected col number");
+            assert!(row == 1, "expected row number");
+            assert!(col == 2, "expected col number");
             assert!(value == "test", "expected symbol value");
         }
         _ => assert!(false, "expected symbol"),
     }
-    match tokens.get(1) {
-        Some(types::Token::Block(types::Location(file, row, col), sub_tokens)) => {
+    match result.take() {
+        Some(parser::Token::Block(types::Location(file, row, col), ref mut lines)) => {
             assert!(*file == "file".to_string(), "expected file name");
-            assert!(*row == 1, "expected row number");
-            assert!(*col == 7, "expected col number");
-            let sub: Vec<&types::Token> = sub_tokens.iter().collect();
-            assert!(sub.len() == 1, "expected 1 token");
-            match sub.get(0) {
-                Some(types::Token::Symbol(types::Location(file, row, col), value)) => {
+            assert!(row == 1, "expected row number");
+            assert!(col == 7, "expected col number");
+            assert!(lines.get(0).unwrap().len() == 1, "expected 1 token");
+            match lines.get(0).unwrap().clone().take() {
+                Some(parser::Token::Symbol(types::Location(file, row, col), value)) => {
                     assert!(*file == "file".to_string(), "expected file name");
-                    assert!(*row == 1, "expected row number");
-                    assert!(*col == 9, "expected col number");
+                    assert!(row == 1, "expected row number");
+                    assert!(col == 9, "expected col number");
                     assert!(value == "contents", "expected symbol value");
                 }
                 _ => assert!(false, "expected symbol"),
@@ -309,13 +339,13 @@ fn test_block() {
 
 #[test]
 fn test_symbol() {
-    let result = lex_file("file".to_string(), " simple".to_string());
+    let mut result = lex_file("file".to_string(), " simple".to_string());
     assert!(result.len() == 1, "expected 1 token");
-    match result.iter().next() {
-        Some(types::Token::Symbol(types::Location(file, row, col), symbol)) => {
+    match result.take() {
+        Some(parser::Token::Symbol(types::Location(file, row, col), symbol)) => {
             assert_eq!(file, "file", "expected file name");
-            assert_eq!(*row, 1, "expected row number");
-            assert_eq!(*col, 2, "expected col number");
+            assert_eq!(row, 1, "expected row number");
+            assert_eq!(col, 2, "expected col number");
             assert_eq!(symbol, "simple", "expected symbol value");
         }
         _ => assert!(false, "expected symbol"),
@@ -324,17 +354,17 @@ fn test_symbol() {
 
 #[test]
 fn test_string() {
-    let result = lex_file(
+    let mut result = lex_file(
         "file".to_string(),
         " \"some 123 \\\"string\\\" \n34\"".to_string(),
     );
     println!("{result:?}");
     assert_eq!(result.len(), 1, "expected 1 token");
-    match result.iter().next() {
-        Some(types::Token::String(types::Location(file, row, col), value)) => {
+    match result.take() {
+        Some(parser::Token::String(types::Location(file, row, col), value)) => {
             assert_eq!(file, "file", "expected file name");
-            assert_eq!(*row, 1, "expected row number");
-            assert_eq!(*col, 2, "expected col number");
+            assert_eq!(row, 1, "expected row number");
+            assert_eq!(col, 2, "expected col number");
             assert_eq!(value, "some 123 \"string\" \n34", "expected string value");
         }
         _ => assert!(false, "expected string"),
@@ -345,25 +375,25 @@ fn test_string() {
 fn test_number() {
     let file_name = "file";
 
-    let result = lex_file(file_name.to_string(), "123.456".to_string());
+    let mut result = lex_file(file_name.to_string(), "123.456".to_string());
     assert!(result.len() == 1, "expected 1 token");
-    match result.iter().next() {
-        Some(types::Token::Number(types::Location(file, row, col), value)) => {
+    match result.take() {
+        Some(parser::Token::Number(types::Location(file, row, col), value)) => {
             assert!(*file == file_name.to_string(), "expected file name");
-            assert!(*row == 1, "expected row number");
-            assert!(*col == 1, "expected col number");
+            assert!(row == 1, "expected row number");
+            assert!(col == 1, "expected col number");
             assert!(value == "123.456", "expected number value");
         }
         _ => assert!(false, "expected number"),
     }
 
-    let result = lex_file(file_name.to_string(), " 1_000_000 ".to_string());
+    let mut result = lex_file(file_name.to_string(), " 1_000_000 ".to_string());
     assert!(result.len() == 1, "expected 1 token");
-    match result.iter().next() {
-        Some(types::Token::Number(types::Location(file, row, col), value)) => {
+    match result.take() {
+        Some(parser::Token::Number(types::Location(file, row, col), value)) => {
             assert!(*file == file_name.to_string(), "expected file name");
-            assert!(*row == 1, "expected row number");
-            assert!(*col == 2, "expected col number");
+            assert!(row == 1, "expected row number");
+            assert!(col == 2, "expected col number");
             assert!(value == "1000000", "expected number value");
         }
         _ => assert!(false, "expected number"),
@@ -373,36 +403,37 @@ fn test_number() {
 #[test]
 fn test_object() {
     let file_name = "file";
-    let result = lex_file(
+    let mut result = lex_file(
         file_name.to_string(),
         "obj = {hello: \"world\", 1: 23.0, \"other\": true == true}".to_string(),
     );
     assert!(result.len() == 3, "expected 3 tokens");
-    let mut iter = result.iter();
-    match iter.next() {
-        Some(types::Token::Symbol(types::Location(file, row, col), symbol)) => {
+    match result.take() {
+        Some(parser::Token::Symbol(types::Location(file, row, col), symbol)) => {
             assert_eq!(*file, file_name.to_string(), "expected file name");
-            assert_eq!(*row, 1, "expected row number");
-            assert_eq!(*col, 1, "expected col number");
+            assert_eq!(row, 1, "expected row number");
+            assert_eq!(col, 1, "expected col number");
             assert_eq!(symbol, "obj", "expected symbol value");
-            let a = iter.next();
-            match a {
-                Some(types::Token::Assign(types::Location(file, row, col))) => {
+            match result.take() {
+                Some(parser::Token::Special(
+                    types::Location(file, row, col),
+                    parser::Special::Assign,
+                )) => {
                     assert_eq!(*file, file_name.to_string(), "expected file name");
-                    assert_eq!(*row, 1, "expected row number");
-                    assert_eq!(*col, 5, "expected col number");
-                    match iter.next() {
-                        Some(types::Token::Object(types::Location(file, row, col), map)) => {
+                    assert_eq!(row, 1, "expected row number");
+                    assert_eq!(col, 5, "expected col number");
+                    match result.take() {
+                        Some(parser::Token::Object(types::Location(file, row, col), map)) => {
                             println!("map {map:?}");
                             assert_eq!(*file, file_name.to_string(), "expected file name");
-                            assert_eq!(*row, 1, "expected row number");
-                            assert_eq!(*col, 7, "expected col number");
+                            assert_eq!(row, 1, "expected row number");
+                            assert_eq!(col, 7, "expected col number");
                             assert_eq!(map["hello"].len(), 1, "expected 1 token for \"hello\"");
                             assert_eq!(map["1"].len(), 1, "expected 1 token for \"1\"");
                             assert_eq!(map["other"].len(), 3, "expected 3 tokens for \"other\"");
                             let mut hello = map.get("hello").unwrap().clone();
-                            match hello.next_new() {
-                                Some(types::Token::String(
+                            match hello.take() {
+                                Some(parser::Token::String(
                                     types::Location(file, row, col),
                                     value,
                                 )) => {
@@ -414,8 +445,8 @@ fn test_object() {
                                 _ => assert!(false, "expected symbol"),
                             }
                             let mut one = map.get("1").unwrap().clone();
-                            match one.next_new() {
-                                Some(types::Token::Number(
+                            match one.take() {
+                                Some(parser::Token::Number(
                                     types::Location(file, row, col),
                                     number,
                                 )) => {
@@ -427,8 +458,8 @@ fn test_object() {
                                 _ => assert!(false, "expected number"),
                             }
                             let mut other = map.get("other").unwrap().clone();
-                            match other.next_new() {
-                                Some(types::Token::Symbol(
+                            match other.take() {
+                                Some(parser::Token::Symbol(
                                     types::Location(file, row, col),
                                     symbol,
                                 )) => {
@@ -439,16 +470,19 @@ fn test_object() {
                                 }
                                 _ => assert!(false, "expected symbol"),
                             }
-                            match other.next_new() {
-                                Some(types::Token::Equality(types::Location(file, row, col))) => {
+                            match other.take() {
+                                Some(parser::Token::Special(
+                                    types::Location(file, row, col),
+                                    parser::Special::Equality,
+                                )) => {
                                     assert_eq!(file, file_name.to_string(), "expected file name");
                                     assert_eq!(row, 1, "expected row number");
                                     assert_eq!(col, 47, "expected col number");
                                 }
                                 _ => assert!(false, "expected equality"),
                             }
-                            match other.next_new() {
-                                Some(types::Token::Symbol(
+                            match other.take() {
+                                Some(parser::Token::Symbol(
                                     types::Location(file, row, col),
                                     symbol,
                                 )) => {
@@ -473,32 +507,34 @@ fn test_object() {
 #[test]
 fn test_array() {
     let file_name = "file";
-    let result = lex_file(
+    let mut result = lex_file(
         file_name.to_string(),
         "array = [\"haha\", 45.6, false, true == true]".to_string(),
     );
     assert!(result.len() == 3);
-    let mut iter = result.iter();
-    match iter.next() {
-        Some(types::Token::Symbol(types::Location(file, row, col), symbol)) => {
+    match result.take() {
+        Some(parser::Token::Symbol(types::Location(file, row, col), symbol)) => {
             assert_eq!(*file, file_name.to_string(), "expected file name");
-            assert_eq!(*row, 1, "expected row number");
-            assert_eq!(*col, 1, "expected col number");
+            assert_eq!(row, 1, "expected row number");
+            assert_eq!(col, 1, "expected col number");
             assert_eq!(symbol, "array", "expected symbol value");
-            match iter.next() {
-                Some(types::Token::Assign(types::Location(file, row, col))) => {
+            match result.take() {
+                Some(parser::Token::Special(
+                    types::Location(file, row, col),
+                    parser::Special::Assign,
+                )) => {
                     assert_eq!(*file, file_name.to_string(), "expected file name");
-                    assert_eq!(*row, 1, "expected row number");
-                    assert_eq!(*col, 7, "expected col number");
-                    match iter.next() {
-                        Some(types::Token::Array(types::Location(file, row, col), items)) => {
+                    assert_eq!(row, 1, "expected row number");
+                    assert_eq!(col, 7, "expected col number");
+                    match result.take() {
+                        Some(parser::Token::Array(types::Location(file, row, col), items)) => {
                             assert_eq!(*file, file_name.to_string(), "expected file name");
-                            assert_eq!(*row, 1, "expected row number");
-                            assert_eq!(*col, 9, "expected col number");
+                            assert_eq!(row, 1, "expected row number");
+                            assert_eq!(col, 9, "expected col number");
                             assert_eq!(items.len(), 4, "expected 4 items in the array");
                             let mut haha = items.get(0).unwrap().clone();
-                            match haha.next_new() {
-                                Some(types::Token::String(
+                            match haha.take() {
+                                Some(parser::Token::String(
                                     types::Location(file, row, col),
                                     value,
                                 )) => {
@@ -510,8 +546,8 @@ fn test_array() {
                                 _ => assert!(false, "expected string"),
                             }
                             let mut num = items.get(1).unwrap().clone();
-                            match num.next_new() {
-                                Some(types::Token::Number(
+                            match num.take() {
+                                Some(parser::Token::Number(
                                     types::Location(file, row, col),
                                     value,
                                 )) => {
@@ -523,8 +559,8 @@ fn test_array() {
                                 _ => assert!(false, "expected number"),
                             }
                             let mut fal = items.get(2).unwrap().clone();
-                            match fal.next_new() {
-                                Some(types::Token::Symbol(
+                            match fal.take() {
+                                Some(parser::Token::Symbol(
                                     types::Location(file, row, col),
                                     value,
                                 )) => {
@@ -536,8 +572,8 @@ fn test_array() {
                                 _ => assert!(false, "expected symbol"),
                             }
                             let mut cond = items.get(3).unwrap().clone();
-                            match cond.next_new() {
-                                Some(types::Token::Symbol(
+                            match cond.take() {
+                                Some(parser::Token::Symbol(
                                     types::Location(file, row, col),
                                     value,
                                 )) => {
@@ -548,16 +584,19 @@ fn test_array() {
                                 }
                                 _ => assert!(false, "expected symbol"),
                             }
-                            match cond.next_new() {
-                                Some(types::Token::Equality(types::Location(file, row, col))) => {
+                            match cond.take() {
+                                Some(parser::Token::Special(
+                                    types::Location(file, row, col),
+                                    parser::Special::Equality,
+                                )) => {
                                     assert_eq!(*file, file_name.to_string(), "expected file name");
                                     assert_eq!(row, 1, "expected row number");
                                     assert_eq!(col, 36, "expected col number");
                                 }
                                 _ => assert!(false, "expected equality"),
                             }
-                            match cond.next_new() {
-                                Some(types::Token::Symbol(
+                            match cond.take() {
+                                Some(parser::Token::Symbol(
                                     types::Location(file, row, col),
                                     value,
                                 )) => {
@@ -576,5 +615,43 @@ fn test_array() {
             }
         }
         _ => assert!(false, "expected symbol"),
+    }
+}
+
+#[test]
+fn test_block_starting_with_newline() {
+    let mut reader = Reader::new("file".to_owned(), "\n    assert : true\n}".to_owned());
+    let mut result = lex_block(&mut reader);
+    match result {
+        Some(parser::Token::Block(types::Location(..), ref mut tokens)) => {
+            assert_eq!(tokens.len(), 2, "expected 2 items");
+            assert_eq!(tokens.get(0).unwrap().len(), 1, "expected 1 item");
+            assert_eq!(tokens.get(1).unwrap().len(), 4, "expected 4 items");
+            match tokens.get_mut(0).unwrap().take() {
+                Some(parser::Token::Eol(..)) => (),
+                _ => assert!(false, "expected eol"),
+            }
+            match tokens.get_mut(1).unwrap().take() {
+                Some(parser::Token::Symbol(.., symbol)) => {
+                    assert_eq!(symbol, "assert".to_owned(), "expected symbol value");
+                }
+                _ => assert!(false, "expected symbol"),
+            }
+            match tokens.get_mut(1).unwrap().take() {
+                Some(parser::Token::Pipe(..)) => (),
+                _ => assert!(false, "expected pipe"),
+            }
+            match tokens.get_mut(1).unwrap().take() {
+                Some(parser::Token::Symbol(.., symbol)) => {
+                    assert_eq!(symbol, "true".to_owned(), "expected symbol value")
+                }
+                _ => assert!(false, "expected symbol"),
+            }
+            match tokens.get_mut(1).unwrap().take() {
+                Some(parser::Token::Eol(..)) => (),
+                _ => assert!(false, "expected eol"),
+            }
+        }
+        _ => assert!(false, "expected block"),
     }
 }

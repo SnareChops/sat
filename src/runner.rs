@@ -1,95 +1,328 @@
+use std::{collections::HashMap, slice::IterMut};
+
 use crate::types;
 
-pub fn run(mut program: types::Program) -> types::RunResult {
+pub enum RunResult<T> {
+    Ok(T),
+    Err(types::Location, String),
+}
+
+#[derive(Debug)]
+pub struct Program {
+    pub declarations: Declarations,
+}
+impl Program {
+    pub fn new() -> Program {
+        Program {
+            declarations: Declarations::new(),
+        }
+    }
+    pub fn add_declaration(&mut self, declaration: Declaration) {
+        self.declarations.0.push(declaration);
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum Declaration {
+    Test(types::Location, String, Block),
+}
+#[derive(Debug, Clone)]
+pub struct Declarations(pub Vec<Declaration>);
+impl Declarations {
+    pub fn new() -> Declarations {
+        return Declarations(vec![]);
+    }
+    pub fn iter_mut(&mut self) -> IterMut<Declaration> {
+        self.0.iter_mut()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum Expression {
+    Primitive(types::Location, Primitive),
+    Assert(types::Location, Box<Expression>),
+    Assignment(types::Location, Box<Expression>, Box<Expression>),
+    Equality(types::Location, Box<Expression>, Box<Expression>),
+    Ref(types::Location, String),
+}
+impl Expression {
+    pub fn eval_in_scope(&self, scope: &Scope) -> Primitive {
+        match self {
+            Expression::Primitive(.., primitive) => primitive.clone(),
+            Expression::Assert(.., expression) => expression.eval_in_scope(scope),
+            Expression::Assignment(.., expression) => expression.eval_in_scope(scope),
+            Expression::Equality(.., left, right) => {
+                let l = left.eval_in_scope(scope);
+                let r = right.eval_in_scope(scope);
+                match l {
+                    Primitive::Void => match r {
+                        Primitive::Void => Primitive::Boolean(true),
+                        _ => Primitive::Boolean(false),
+                    },
+                    Primitive::Boolean(a) => match r {
+                        Primitive::Boolean(b) => {
+                            if a == b {
+                                Primitive::Boolean(true)
+                            } else {
+                                Primitive::Boolean(false)
+                            }
+                        }
+                        _ => Primitive::Boolean(false),
+                    },
+                    Primitive::Number(a) => match r {
+                        Primitive::Number(b) => {
+                            if a == b {
+                                Primitive::Boolean(true)
+                            } else {
+                                Primitive::Boolean(false)
+                            }
+                        }
+                        _ => Primitive::Boolean(false),
+                    },
+                    Primitive::String(a) => match r {
+                        Primitive::String(b) => {
+                            if a == b {
+                                Primitive::Boolean(true)
+                            } else {
+                                Primitive::Boolean(false)
+                            }
+                        }
+                        _ => Primitive::Boolean(false),
+                    },
+                }
+            }
+            Expression::Ref(.., name) => match scope.get_var(name) {
+                Some(primitive) => primitive.clone(),
+                None => Primitive::Void,
+            },
+        }
+    }
+    pub fn loc(&self) -> types::Location {
+        match self {
+            Expression::Assert(loc, ..) => loc.clone(),
+            Expression::Assignment(loc, ..) => loc.clone(),
+            Expression::Equality(loc, ..) => loc.clone(),
+            Expression::Primitive(loc, ..) => loc.clone(),
+            Expression::Ref(loc, ..) => loc.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum Primitive {
+    Void,
+    Boolean(bool),
+    Number(f32),
+    String(String),
+}
+
+#[derive(Debug, Clone)]
+pub struct Block(pub types::Location, pub Vec<Expression>, pub Scope);
+impl Block {
+    pub fn new(location: types::Location) -> Block {
+        Block(location, Vec::<Expression>::new(), Scope::new())
+    }
+    pub fn add_expression(&mut self, expression: Expression) {
+        self.1.push(expression);
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Scope {
+    vars: HashMap<String, Primitive>,
+}
+impl Scope {
+    pub fn new() -> Scope {
+        Scope {
+            vars: HashMap::new(),
+        }
+    }
+    pub fn get_var(&self, name: &String) -> Option<&Primitive> {
+        self.vars.get(name)
+    }
+    pub fn set_var(&mut self, name: &String, value: &Primitive) {
+        self.vars.insert(name.to_string(), value.clone());
+    }
+}
+
+#[derive(Clone)]
+pub struct Feedback(Vec<String>);
+impl Feedback {
+    pub fn new() -> Feedback {
+        Feedback(vec![])
+    }
+    pub fn add_test_pass(&mut self, name: String) {
+        self.0.push(format!("\t✓\t{name}"))
+    }
+    pub fn add_test_fail(&mut self, name: String, failed: Vec<types::Location>) {
+        self.0.push(format!(
+            "\t❌\t{name}\n\t\t- assert {}",
+            failed
+                .iter()
+                .map(|x| x.to_string())
+                .collect::<Vec<String>>()
+                .join("\n\t\t- assert ")
+        ))
+    }
+    pub fn to_string(&self) -> String {
+        self.0.join("\n")
+    }
+}
+
+pub fn run(mut program: Program) -> RunResult<Feedback> {
     println!("run {program:?}\n---");
     let declarations = program.declarations.iter_mut();
-    let mut result = types::RunResult::ok("Running tests".to_string());
+    let ref mut feedback = Feedback::new();
     for declaration in declarations {
         match declaration {
-            types::Declaration::Test(loc, name, ref mut block) => {
-                let r = run_test(loc, name, block);
+            Declaration::Test(loc, name, ref mut block) => {
+                let r = run_test(feedback, loc.clone(), name.clone(), block);
                 match r {
-                    types::RunResult::Ok(..) => result.merge(&r),
-                    _ => (),
+                    RunResult::Err(loc, err) => return RunResult::Err(loc, err),
+                    RunResult::Ok(..) => (),
                 }
-                return r;
             }
         };
     }
-    return result;
+    RunResult::Ok(feedback.clone())
 }
 
 pub fn run_test(
-    location: &types::Location,
-    name: &String,
-    block: &mut types::Block,
-) -> types::RunResult {
+    feedback: &mut Feedback,
+    location: types::Location,
+    name: String,
+    block: &mut Block,
+) -> RunResult<()> {
     println!("run_test\n\t{location:?}\n\t{name}\n\t{block:?}\n---");
-    let types::Block(loc, expressions, scope) = block;
-    let mut result = types::RunResult::ok("Running test ".to_owned() + name);
+    let Block(.., expressions, scope) = block;
     let mut asserts = Vec::<(types::Location, bool)>::new();
     for expression in expressions.iter() {
-        let r = run_expression(location, expression, scope, &mut asserts);
+        let r = run_expression(location.clone(), expression.clone(), scope, &mut asserts);
         match r {
-            types::RunResult::Ok(..) => result.merge(&r),
-            types::RunResult::Err(..) => return r,
+            RunResult::Err(loc, err) => return RunResult::Err(loc, err),
+            RunResult::Ok(..) => (),
         }
     }
-    let mut failed = Vec::<String>::new();
+    let mut failed = Vec::<types::Location>::new();
     for (loc, passed) in asserts {
         if !passed {
-            failed.push(format!("Failed assert: {}", loc.to_string()))
+            failed.push(loc)
         }
     }
     if failed.len() > 0 {
-        result.merge(&types::RunResult::Ok(failed))
+        feedback.add_test_fail(name, failed)
     } else {
-        result.merge(&types::RunResult::ok("Test passed".to_string()))
+        feedback.add_test_pass(name)
     }
-    return result;
+    return RunResult::Ok(());
 }
 
 pub fn run_expression(
-    location: &types::Location,
-    expression: &types::Expression,
-    scope: &mut types::Scope,
+    location: types::Location,
+    expression: Expression,
+    scope: &mut Scope,
     asserts: &mut Vec<(types::Location, bool)>,
-) -> types::RunResult {
+) -> RunResult<()> {
     println!("run_expression\n\t{location:?}\n\t{expression:?}\n\t{scope:?}\n---");
     match expression {
-        types::Expression::Assert(loc, expression) => run_assert(loc, &expression, scope, asserts),
-        types::Expression::Assignment(loc, left, right) => run_assignment(loc, left, right, scope),
-        _ => types::RunResult::Ok(vec![]),
+        Expression::Assert(loc, expression) => run_assert(loc, *expression, scope, asserts),
+        Expression::Assignment(loc, left, right) => run_assignment(loc, *left, *right, scope),
+        _ => RunResult::Ok(()),
     }
 }
 
 pub fn run_assignment(
-    location: &types::Location,
-    left: &types::Expression,
-    right: &types::Expression,
-    scope: &mut types::Scope,
-) -> types::RunResult {
+    location: types::Location,
+    left: Expression,
+    right: Expression,
+    scope: &mut Scope,
+) -> RunResult<()> {
     println!("run_assignment\n\t{location:?}\n\t{left:?}\n\t{right:?}\n\t{scope:?}\n---");
-    if let types::Expression::Ref(.., name) = left {
+    if let Expression::Ref(.., ref name) = left {
         scope.set_var(name, &right.eval_in_scope(scope));
-        types::RunResult::Ok(vec![])
+        RunResult::Ok(())
     } else {
-        types::RunResult::Err(left.loc().clone(), "Invalid assignment".to_string())
+        RunResult::Err(left.loc().clone(), "Invalid assignment".to_string())
     }
 }
 
 pub fn run_assert(
-    location: &types::Location,
-    expression: &types::Expression,
-    scope: &types::Scope,
+    location: types::Location,
+    expression: Expression,
+    scope: &Scope,
     asserts: &mut Vec<(types::Location, bool)>,
-) -> types::RunResult {
+) -> RunResult<()> {
     println!("run_assert\n\t{location:?}\n\t{expression:?}\n\t{scope:?}\n---");
     match expression.eval_in_scope(scope) {
-        types::Primitive::Boolean(value) => {
+        Primitive::Boolean(value) => {
             asserts.push((location.clone(), value));
-            return types::RunResult::Ok(vec![]);
+            RunResult::Ok(())
         }
-        _ => types::RunResult::ok("Expected boolean value or expression".to_string()),
+        _ => RunResult::Err(
+            location,
+            format!("Expected bool value as expression result for assert"),
+        ),
+    }
+}
+
+#[test]
+fn test_assignment() {
+    let file = "file".to_string();
+    let row = 4;
+    let col = 7;
+    let loc = types::Location(file.to_owned(), row, col);
+    let left = Expression::Ref(loc.clone(), "hello".to_string());
+    let right = Expression::Primitive(loc.clone(), Primitive::String("world".to_string()));
+    let mut scope = Scope::new();
+    let result = run_assignment(loc, left, right, &mut scope);
+    match result {
+        RunResult::Err(..) => assert!(false, "expected run_assignment to return Ok"),
+        RunResult::Ok(..) => match scope.get_var(&"hello".to_string()) {
+            Some(Primitive::String(value)) => {
+                assert_eq!(
+                    value.to_owned(),
+                    "world".to_string(),
+                    "expected value of variable"
+                )
+            }
+            _ => assert!(false, "expected variable in scope"),
+        },
+    }
+}
+
+#[test]
+fn test_assert() {
+    let file = "file".to_string();
+    let row = 3;
+    let col = 5;
+    let loc = types::Location(file.to_owned(), row, col);
+    let primitive = Expression::Primitive(loc.clone(), Primitive::Number(2.3));
+    let equality = Expression::Equality(
+        loc.clone(),
+        Box::new(primitive.clone()),
+        Box::new(primitive.clone()),
+    );
+    let assert = Expression::Assert(
+        types::Location(file.to_owned(), row, col),
+        Box::new(equality),
+    );
+    let scope = Scope::new();
+    let mut asserts = Vec::<(types::Location, bool)>::new();
+    let result = run_assert(
+        types::Location(file.clone(), row, col),
+        assert,
+        &scope,
+        &mut asserts,
+    );
+    match result {
+        RunResult::Err(..) => assert!(false, "expected run_assert to return Ok"),
+        RunResult::Ok(..) => {
+            assert_eq!(asserts.len(), 1, "expected 1 run assert");
+            assert_eq!(
+                asserts.get(0).unwrap().1,
+                true,
+                "expected assert to have succeeded"
+            );
+        }
     }
 }
