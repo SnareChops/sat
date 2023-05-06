@@ -89,6 +89,8 @@ impl Expression {
                         }
                         _ => Primitive::Boolean(false),
                     },
+                    Primitive::Object(map) => todo!(),
+                    Primitive::Array(expressions) => todo!(),
                 }
             }
             Expression::Ref(.., name) => match scope.get_var(name) {
@@ -114,6 +116,8 @@ pub enum Primitive {
     Boolean(bool),
     Number(f32),
     String(String),
+    Object(HashMap<String, Expression>),
+    Array(Vec<Expression>),
 }
 
 #[derive(Debug, Clone)]
@@ -137,8 +141,34 @@ impl Scope {
             vars: HashMap::new(),
         }
     }
-    pub fn get_var(&self, name: &String) -> Option<&Primitive> {
-        self.vars.get(name)
+    pub fn get_var(&self, name: &String) -> Option<Primitive> {
+        if !name.contains('.') {
+            self.vars.get(name).cloned()
+        } else {
+            let mut parts = name.split('.');
+            if let Some(part) = parts.next() {
+                let var = self.vars.get(part);
+                while let Some(part) = parts.next() {
+                    match var {
+                        Some(Primitive::Object(map)) => match map.get(part) {
+                            Some(expression) => return Some(expression.eval_in_scope(self)),
+                            None => todo!(),
+                        },
+                        Some(Primitive::Array(expressions)) => match part.parse::<usize>() {
+                            Ok(index) => match expressions.get(index) {
+                                Some(expression) => return Some(expression.eval_in_scope(self)),
+                                None => todo!(),
+                            },
+                            Err(err) => todo!(),
+                        },
+                        _ => todo!(),
+                    }
+                }
+                None
+            } else {
+                None
+            }
+        }
     }
     pub fn set_var(&mut self, name: &String, value: &Primitive) {
         self.vars.insert(name.to_string(), value.clone());
@@ -262,6 +292,34 @@ pub fn run_assert(
             location,
             format!("Expected bool value as expression result for assert"),
         ),
+    }
+}
+
+#[test]
+fn test_scope_get_var() {
+    let mut scope = Scope {
+        vars: HashMap::new(),
+    };
+    scope
+        .vars
+        .insert("bool".to_string(), Primitive::Boolean(true));
+    let loc = types::Location("file".to_string(), 1, 1);
+    let mut map = HashMap::<String, Expression>::new();
+    map.insert(
+        "hello".to_string(),
+        Expression::Primitive(loc, Primitive::String("world".to_string())),
+    );
+
+    match scope.get_var(&"bool".to_string()) {
+        Some(Primitive::Boolean(value)) => assert!(value, "expected bool value"),
+        _ => assert!(false, "expected bool"),
+    }
+
+    scope.vars.insert("obj".to_string(), Primitive::Object(map));
+
+    match scope.get_var(&"obj.hello".to_string()) {
+        Some(Primitive::String(string)) => assert_eq!(string, "world", "expected string value"),
+        _ => assert!(false, "expected string"),
     }
 }
 

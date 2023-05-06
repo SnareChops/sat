@@ -18,6 +18,7 @@ pub enum Token {
     Array(types::Location, Vec<Tokens>),
     Special(types::Location, Special),
     Pipe(types::Location, Tokens),
+    Dot(types::Location),
     Eol(types::Location),
 }
 impl Token {
@@ -31,6 +32,7 @@ impl Token {
             Token::Array(loc, ..) => loc.clone(),
             Token::Special(loc, ..) => loc.clone(),
             Token::Pipe(loc, ..) => loc.clone(),
+            Token::Dot(loc) => loc.clone(),
             Token::Eol(loc) => loc.clone(),
         }
     }
@@ -47,6 +49,9 @@ impl Tokens {
     }
     pub fn peek(&self) -> Option<Token> {
         self.0.get(0).cloned()
+    }
+    pub fn peek_at(&self, index: usize) -> Option<Token> {
+        self.0.get(index).cloned()
     }
     pub fn last(&self) -> Option<Token> {
         self.0.get(self.0.len() - 1).cloned()
@@ -156,20 +161,36 @@ fn parse_expression(tokens: &mut Tokens) -> ParseResult<runner::Expression> {
     match tokens.split_on_first_special() {
         Some((Special::Assign, ref mut left, ref mut right)) => parse_assign(left, right),
         Some((Special::Equality, ref mut left, ref mut right)) => parse_equality(left, right),
-        None => match tokens.take() {
-            Some(Token::Symbol(loc, symbol)) => match symbol.as_str() {
-                "true" => ParseResult::Ok(runner::Expression::Primitive(
-                    loc,
-                    runner::Primitive::Boolean(true),
-                )),
-                "false" => ParseResult::Ok(runner::Expression::Primitive(
-                    loc,
-                    runner::Primitive::Boolean(false),
-                )),
-                "assert" => parse_assert(loc.clone(), tokens),
-                _ => ParseResult::Ok(runner::Expression::Ref(loc, symbol)),
-            },
+        None => match tokens.peek() {
+            Some(Token::Symbol(loc, symbol)) => {
+                if let Some(Token::Dot(..)) = tokens.peek_at(1) {
+                    parse_ref(tokens)
+                } else {
+                    match symbol.as_str() {
+                        "true" => {
+                            tokens.take();
+                            ParseResult::Ok(runner::Expression::Primitive(
+                                loc,
+                                runner::Primitive::Boolean(true),
+                            ))
+                        }
+                        "false" => {
+                            tokens.take();
+                            ParseResult::Ok(runner::Expression::Primitive(
+                                loc,
+                                runner::Primitive::Boolean(false),
+                            ))
+                        }
+                        "assert" => {
+                            tokens.take();
+                            parse_assert(loc.clone(), tokens)
+                        }
+                        _ => parse_ref(tokens),
+                    }
+                }
+            }
             Some(Token::Number(loc, number)) => {
+                tokens.take();
                 if let Ok(number) = number.parse::<f32>() {
                     ParseResult::Ok(runner::Expression::Primitive(
                         loc,
@@ -179,16 +200,91 @@ fn parse_expression(tokens: &mut Tokens) -> ParseResult<runner::Expression> {
                     ParseResult::Err(loc, format!("Unable to parse {number:?} as a number"))
                 }
             }
-            Some(Token::String(loc, string)) => ParseResult::Ok(runner::Expression::Primitive(
-                loc,
-                runner::Primitive::String(string),
-            )),
+            Some(Token::String(loc, string)) => {
+                tokens.take();
+                ParseResult::Ok(runner::Expression::Primitive(
+                    loc,
+                    runner::Primitive::String(string),
+                ))
+            }
+            Some(Token::Object(loc, ref mut map)) => {
+                tokens.take();
+                parse_object(loc, map)
+            }
+            Some(Token::Array(loc, ref mut array)) => {
+                tokens.take();
+                parse_array(loc, array)
+            }
             _ => ParseResult::Err(
-                tokens.peek().unwrap().loc(),
+                tokens
+                    .peek()
+                    .unwrap_or(Token::Eol(types::Location("".to_owned(), 0, 0)))
+                    .loc(),
                 "Unknown expression type".to_string(),
             ),
         },
     }
+}
+
+fn parse_ref(tokens: &mut Tokens) -> ParseResult<runner::Expression> {
+    println!("parse_ref\n\t{tokens:?}\n---");
+    let loc = tokens.peek().unwrap().loc();
+    let mut symbol = "".to_string();
+    while let Some(token) = tokens.peek() {
+        match token {
+            Token::Dot(..) => {
+                tokens.take();
+                symbol.push('.')
+            }
+            Token::Symbol(.., value) => {
+                tokens.take();
+                symbol += value.as_str()
+            }
+            Token::Number(.., value) => {
+                tokens.take();
+                symbol += value.as_str()
+            }
+            _ => return ParseResult::Ok(runner::Expression::Ref(loc, symbol)),
+        }
+    }
+    ParseResult::Ok(runner::Expression::Ref(loc, symbol))
+}
+
+fn parse_object(
+    loc: types::Location,
+    map: &mut HashMap<String, Tokens>,
+) -> ParseResult<runner::Expression> {
+    println!("parse_object\n\t{loc:?}\n\t{map:?}\n---");
+    let mut new_map = HashMap::<String, runner::Expression>::new();
+    for key in map.keys() {
+        if let Some(ref mut tokens) = map.get(key).cloned() {
+            match parse_expression(tokens) {
+                ParseResult::Err(loc, err) => return ParseResult::Err(loc, err),
+                ParseResult::Ok(expression) => {
+                    new_map.insert(key.to_owned(), expression);
+                }
+            }
+        }
+    }
+    ParseResult::Ok(runner::Expression::Primitive(
+        loc,
+        runner::Primitive::Object(new_map),
+    ))
+}
+
+fn parse_array(loc: types::Location, array: &mut Vec<Tokens>) -> ParseResult<runner::Expression> {
+    println!("parse_array\n\t{loc:?}\n\t{array:?}\n---");
+    let mut result = Vec::<runner::Expression>::new();
+    for tokens in array {
+        match parse_expression(tokens) {
+            ParseResult::Err(loc, err) => return ParseResult::Err(loc, err),
+            ParseResult::Ok(expression) => result.push(expression),
+        }
+    }
+    ParseResult::Ok(runner::Expression::Primitive(
+        loc,
+        runner::Primitive::Array(result),
+    ))
 }
 
 fn parse_assign(left: &mut Tokens, right: &mut Tokens) -> ParseResult<runner::Expression> {

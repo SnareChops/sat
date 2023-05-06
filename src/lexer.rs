@@ -39,7 +39,11 @@ impl Reader {
         return char;
     }
     fn loc(&self) -> types::Location {
-        types::Location(self.file.to_owned(), self.row, self.col + 1)
+        if self.was_newline {
+            types::Location(self.file.to_owned(), self.row + 1, 1)
+        } else {
+            types::Location(self.file.to_owned(), self.row, self.col + 1)
+        }
     }
 }
 
@@ -81,6 +85,10 @@ fn lex_until(mut reader: &mut Reader, until: Option<Vec<char>>) -> (parser::Toke
                 }
             }
             tokens.add(parser::Token::Special(loc, parser::Special::Assign));
+        // .
+        } else if rune == '.' {
+            reader.take();
+            tokens.add(parser::Token::Dot(reader.loc()));
         // "
         } else if rune == '"' {
             if let Some(token) = lex_string(&mut reader) {
@@ -242,11 +250,9 @@ fn lex_object(reader: &mut Reader) -> Option<parser::Token> {
                 if let Some(ref key) = prop {
                     object.insert(key.to_string(), tokens);
                     if let Some(char) = ended_with {
+                        reader.take();
                         if char == '}' {
                             return Some(parser::Token::Object(loc, object));
-                        }
-                        if char == ',' {
-                            reader.take();
                         }
                     }
                 } else {
@@ -405,28 +411,51 @@ fn test_object() {
     let file_name = "file";
     let mut result = lex_file(
         file_name.to_string(),
-        "obj = {hello: \"world\", 1: 23.0, \"other\": true == true}".to_string(),
+        "test {\nobj = {hello: \"world\", 1: 23.0, \"other\": true == true}\na=b\n}".to_string(),
     );
-    assert!(result.len() == 3, "expected 3 tokens");
+    assert!(result.len() == 2, "expected 2 tokens");
     match result.take() {
         Some(parser::Token::Symbol(types::Location(file, row, col), symbol)) => {
-            assert_eq!(*file, file_name.to_string(), "expected file name");
+            assert_eq!(file, file_name.to_string(), "expected file name");
             assert_eq!(row, 1, "expected row number");
             assert_eq!(col, 1, "expected col number");
-            assert_eq!(symbol, "obj", "expected symbol value");
-            match result.take() {
-                Some(parser::Token::Special(
-                    types::Location(file, row, col),
-                    parser::Special::Assign,
-                )) => {
-                    assert_eq!(*file, file_name.to_string(), "expected file name");
-                    assert_eq!(row, 1, "expected row number");
-                    assert_eq!(col, 5, "expected col number");
-                    match result.take() {
+            assert_eq!(symbol, "test", "expected symbol value");
+        }
+        _ => assert!(false, "expected symbol"),
+    }
+    match result.take() {
+        Some(parser::Token::Block(types::Location(file, row, col), ref mut tokens)) => {
+            assert_eq!(file, file_name.to_string(), "expected file name");
+            assert_eq!(row, 1, "expected row number");
+            assert_eq!(col, 6, "expected col number");
+            assert_eq!(tokens.len(), 2, "expected 2 sets of tokens");
+            match tokens.get_mut(0) {
+                Some(tokens) => {
+                    match tokens.take() {
+                        Some(parser::Token::Symbol(types::Location(file, row, col), symbol)) => {
+                            assert_eq!(*file, file_name.to_string(), "expected file name");
+                            assert_eq!(row, 2, "expected row number");
+                            assert_eq!(col, 1, "expected col number");
+                            assert_eq!(symbol, "obj", "expected symbol value");
+                        }
+                        _ => assert!(false, "expected symbol"),
+                    }
+                    match tokens.take() {
+                        Some(parser::Token::Special(
+                            types::Location(file, row, col),
+                            parser::Special::Assign,
+                        )) => {
+                            assert_eq!(*file, file_name.to_string(), "expected file name");
+                            assert_eq!(row, 2, "expected row number");
+                            assert_eq!(col, 5, "expected col number");
+                        }
+                        _ => assert!(false, "expected special"),
+                    }
+                    match tokens.take() {
                         Some(parser::Token::Object(types::Location(file, row, col), map)) => {
                             println!("map {map:?}");
                             assert_eq!(*file, file_name.to_string(), "expected file name");
-                            assert_eq!(row, 1, "expected row number");
+                            assert_eq!(row, 2, "expected row number");
                             assert_eq!(col, 7, "expected col number");
                             assert_eq!(map["hello"].len(), 1, "expected 1 token for \"hello\"");
                             assert_eq!(map["1"].len(), 1, "expected 1 token for \"1\"");
@@ -438,7 +467,7 @@ fn test_object() {
                                     value,
                                 )) => {
                                     assert_eq!(*file, file_name.to_string(), "expected file name");
-                                    assert_eq!(row, 1, "expected row number");
+                                    assert_eq!(row, 2, "expected row number");
                                     assert_eq!(col, 15, "expected col number");
                                     assert_eq!(value, "world", "expected symbol value");
                                 }
@@ -451,7 +480,7 @@ fn test_object() {
                                     number,
                                 )) => {
                                     assert_eq!(file, file_name.to_string(), "expected file name");
-                                    assert_eq!(row, 1, "expected row number");
+                                    assert_eq!(row, 2, "expected row number");
                                     assert_eq!(col, 27, "expected col number");
                                     assert_eq!(number, "23.0", "expected number value");
                                 }
@@ -464,7 +493,7 @@ fn test_object() {
                                     symbol,
                                 )) => {
                                     assert_eq!(file, file_name.to_string(), "expected file name");
-                                    assert_eq!(row, 1, "expected row number");
+                                    assert_eq!(row, 2, "expected row number");
                                     assert_eq!(col, 42, "expected col number");
                                     assert_eq!(symbol, "true", "expected symbol value");
                                 }
@@ -476,7 +505,7 @@ fn test_object() {
                                     parser::Special::Equality,
                                 )) => {
                                     assert_eq!(file, file_name.to_string(), "expected file name");
-                                    assert_eq!(row, 1, "expected row number");
+                                    assert_eq!(row, 2, "expected row number");
                                     assert_eq!(col, 47, "expected col number");
                                 }
                                 _ => assert!(false, "expected equality"),
@@ -487,7 +516,7 @@ fn test_object() {
                                     symbol,
                                 )) => {
                                     assert_eq!(file, file_name.to_string(), "expected file name");
-                                    assert_eq!(row, 1, "expected row number");
+                                    assert_eq!(row, 2, "expected row number");
                                     assert_eq!(col, 50, "expected col number");
                                     assert_eq!(symbol, "true", "expected symbol value")
                                 }
@@ -497,10 +526,44 @@ fn test_object() {
                         _ => assert!(false, "expeted object"),
                     }
                 }
-                _ => assert!(false, "expected assign"),
+                _ => assert!(false, "expected tokens"),
+            }
+            match tokens.get_mut(1) {
+                Some(tokens) => {
+                    match tokens.take() {
+                        Some(parser::Token::Symbol(types::Location(file, row, col), symbol)) => {
+                            assert_eq!(file, file_name.to_string(), "expected file name");
+                            assert_eq!(row, 3, "expected row number");
+                            assert_eq!(col, 1, "expected col number");
+                            assert_eq!(symbol, "a", "expected symbol value");
+                        }
+                        _ => assert!(false, "expected symbol"),
+                    }
+                    match tokens.take() {
+                        Some(parser::Token::Special(
+                            types::Location(file, row, col),
+                            parser::Special::Assign,
+                        )) => {
+                            assert_eq!(file, file_name.to_string(), "expected file name");
+                            assert_eq!(row, 3, "expected row number");
+                            assert_eq!(col, 2, "expected col number");
+                        }
+                        _ => assert!(false, "expected assign"),
+                    }
+                    match tokens.take() {
+                        Some(parser::Token::Symbol(types::Location(file, row, col), symbol)) => {
+                            assert_eq!(file, file_name.to_string(), "expected file name");
+                            assert_eq!(row, 3, "expected row number");
+                            assert_eq!(col, 3, "expected col number");
+                            assert_eq!(symbol, "b", "expected symbol value");
+                        }
+                        _ => assert!(false, "expected symbol"),
+                    }
+                }
+                _ => assert!(false, "expected set of tokens"),
             }
         }
-        _ => assert!(false, "expected symbol"),
+        _ => assert!(false, "expected block"),
     }
 }
 

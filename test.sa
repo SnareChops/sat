@@ -3,6 +3,12 @@ test "simple test" {
     bool = true
     assert : bool
 
+    obj = {hello: "world"}
+    assert : obj.hello == "world"
+
+    array = [1,2]
+    assert : array.1 == 2
+
     num = 1
     assert : num == 1
 }
