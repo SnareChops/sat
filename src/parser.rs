@@ -185,6 +185,10 @@ fn parse_expression(tokens: &mut Tokens) -> ParseResult<runner::Expression> {
                             tokens.take();
                             parse_assert(loc.clone(), tokens)
                         }
+                        "get" => {
+                            tokens.take();
+                            parse_get(loc.clone(), tokens)
+                        }
                         _ => parse_ref(tokens),
                     }
                 }
@@ -318,11 +322,24 @@ fn parse_equality(left: &mut Tokens, right: &mut Tokens) -> ParseResult<runner::
 }
 
 fn parse_assert(location: types::Location, tokens: &mut Tokens) -> ParseResult<runner::Expression> {
-    println!("parse_assert\n\t{tokens:?}\n---");
+    println!("parse_assert\n\t{location:?}\n\t{tokens:?}\n---");
     match tokens.take() {
         Some(Token::Pipe(.., ref mut tokens)) => match parse_expression(tokens) {
             ParseResult::Ok(expression) => {
                 ParseResult::Ok(runner::Expression::Assert(location, Box::new(expression)))
+            }
+            ParseResult::Err(loc, err) => ParseResult::Err(loc, err),
+        },
+        _ => ParseResult::Err(location, "expected pipe".to_string()),
+    }
+}
+
+fn parse_get(location: types::Location, tokens: &mut Tokens) -> ParseResult<runner::Expression> {
+    println!("parse_get\n\t{location:?}\n\t{tokens:?}\n---");
+    match tokens.take() {
+        Some(Token::Pipe(.., ref mut tokens)) => match parse_expression(tokens) {
+            ParseResult::Ok(expression) => {
+                ParseResult::Ok(runner::Expression::Get(location, Box::new(expression)))
             }
             ParseResult::Err(loc, err) => ParseResult::Err(loc, err),
         },
