@@ -383,15 +383,19 @@ fn test_assert() {
                     }
                 }
                 assert_eq!(*name, "name".to_owned(), "expected test name");
-                match &block.0 {
+                match &block.loc() {
                     types::Location(file, row, col) => {
                         assert_eq!(*file, "file".to_owned());
                         assert_eq!(*row, 1, "expected row number");
                         assert_eq!(*col, 11, "expected col number");
                     }
                 }
-                assert_eq!(block.1.len(), 1, "expected 1 expression in the block");
-                match block.1.get(0).unwrap() {
+                assert_eq!(
+                    block.expressions().len(),
+                    1,
+                    "expected 1 expression in the block"
+                );
+                match block.expressions().get(0).unwrap() {
                     runner::Expression::Assert(types::Location(file, row, col), expression) => {
                         assert_eq!(*file, "file".to_owned(), "expected file name");
                         assert_eq!(*row, 2, "expected row number");

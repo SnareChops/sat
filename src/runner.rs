@@ -49,65 +49,6 @@ pub enum Expression {
     Get(types::Location, Box<Expression>),
 }
 impl Expression {
-    pub fn eval_in_scope(&self, scope: &Scope) -> Primitive {
-        match self {
-            Expression::Primitive(.., primitive) => primitive.clone(),
-            Expression::Assert(.., expression) => expression.eval_in_scope(scope),
-            Expression::Assignment(.., expression) => expression.eval_in_scope(scope),
-            Expression::Get(loc, expression) => {
-                match run_get(loc.clone(), *expression.clone(), scope) {
-                    RunResult::Ok(primitive) => primitive,
-                    RunResult::Err(loc, err) => panic!("{err}"),
-                }
-            }
-            Expression::Equality(.., left, right) => {
-                let l = left.eval_in_scope(scope);
-                let r = right.eval_in_scope(scope);
-                match l {
-                    Primitive::Void => match r {
-                        Primitive::Void => Primitive::Boolean(true),
-                        _ => Primitive::Boolean(false),
-                    },
-                    Primitive::Boolean(a) => match r {
-                        Primitive::Boolean(b) => {
-                            if a == b {
-                                Primitive::Boolean(true)
-                            } else {
-                                Primitive::Boolean(false)
-                            }
-                        }
-                        _ => Primitive::Boolean(false),
-                    },
-                    Primitive::Number(a) => match r {
-                        Primitive::Number(b) => {
-                            if a == b {
-                                Primitive::Boolean(true)
-                            } else {
-                                Primitive::Boolean(false)
-                            }
-                        }
-                        _ => Primitive::Boolean(false),
-                    },
-                    Primitive::String(a) => match r {
-                        Primitive::String(b) => {
-                            if a == b {
-                                Primitive::Boolean(true)
-                            } else {
-                                Primitive::Boolean(false)
-                            }
-                        }
-                        _ => Primitive::Boolean(false),
-                    },
-                    Primitive::Object(map) => todo!(),
-                    Primitive::Array(expressions) => todo!(),
-                }
-            }
-            Expression::Ref(.., name) => match scope.get_var(name) {
-                Some(primitive) => primitive.clone(),
-                None => Primitive::Void,
-            },
-        }
-    }
     pub fn loc(&self) -> types::Location {
         match self {
             Expression::Assert(loc, ..) => loc.clone(),
@@ -131,7 +72,7 @@ pub enum Primitive {
 }
 
 #[derive(Debug, Clone)]
-pub struct Block(pub types::Location, pub Vec<Expression>, pub Scope);
+pub struct Block(types::Location, Vec<Expression>, Scope);
 impl Block {
     pub fn new(location: types::Location) -> Block {
         Block(location, Vec::<Expression>::new(), Scope::new())
@@ -139,45 +80,38 @@ impl Block {
     pub fn add_expression(&mut self, expression: Expression) {
         self.1.push(expression);
     }
+    pub fn loc(&self) -> types::Location {
+        self.0.clone()
+    }
+    pub fn expressions(&self) -> Vec<Expression> {
+        self.1.clone()
+    }
+    pub fn scope(&self) -> Scope {
+        self.2.clone()
+    }
+}
+
+#[derive(Debug, Clone)]
+struct Assert(types::Location, bool);
+impl Assert {
+    fn loc(&self) -> types::Location {
+        self.0.clone()
+    }
+    fn passed(&self) -> bool {
+        self.1
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct Scope {
     vars: HashMap<String, Primitive>,
+    asserts: Vec<Assert>,
 }
 impl Scope {
     pub fn new() -> Scope {
         Scope {
             vars: HashMap::new(),
-        }
-    }
-    pub fn get_var(&self, name: &String) -> Option<Primitive> {
-        if !name.contains('.') {
-            self.vars.get(name).cloned()
-        } else {
-            let mut parts = name.split('.');
-            if let Some(part) = parts.next() {
-                let var = self.vars.get(part);
-                while let Some(part) = parts.next() {
-                    match var {
-                        Some(Primitive::Object(map)) => match map.get(part) {
-                            Some(expression) => return Some(expression.eval_in_scope(self)),
-                            None => todo!(),
-                        },
-                        Some(Primitive::Array(expressions)) => match part.parse::<usize>() {
-                            Ok(index) => match expressions.get(index) {
-                                Some(expression) => return Some(expression.eval_in_scope(self)),
-                                None => todo!(),
-                            },
-                            Err(err) => todo!(),
-                        },
-                        _ => todo!(),
-                    }
-                }
-                None
-            } else {
-                None
-            }
+            asserts: Vec::new(),
         }
     }
     pub fn set_var(&mut self, name: &String, value: &Primitive) {
@@ -234,17 +168,16 @@ fn run_test(
 ) -> RunResult<()> {
     println!("run_test\n\t{location:?}\n\t{name}\n\t{block:?}\n---");
     let Block(.., expressions, scope) = block;
-    let mut asserts = Vec::<(types::Location, bool)>::new();
     for expression in expressions.iter() {
-        match run_expression(location.clone(), expression.clone(), scope, &mut asserts) {
+        match run_expression(expression.clone(), scope) {
             RunResult::Err(loc, err) => return RunResult::Err(loc, err),
             RunResult::Ok(..) => (),
         }
     }
     let mut failed = Vec::<types::Location>::new();
-    for (loc, passed) in asserts {
-        if !passed {
-            failed.push(loc)
+    for ref ass in &scope.asserts {
+        if !ass.passed() {
+            failed.push(ass.loc())
         }
     }
     if failed.len() > 0 {
@@ -255,18 +188,54 @@ fn run_test(
     return RunResult::Ok(());
 }
 
-fn run_expression(
-    location: types::Location,
-    expression: Expression,
-    scope: &mut Scope,
-    asserts: &mut Vec<(types::Location, bool)>,
-) -> RunResult<Primitive> {
-    println!("run_expression\n\t{location:?}\n\t{expression:?}\n\t{scope:?}\n---");
+fn run_expression(expression: Expression, scope: &mut Scope) -> RunResult<Primitive> {
+    println!("run_expression\n\t{expression:?}\n\t{scope:?}\n---");
     match expression {
-        Expression::Assert(loc, expression) => run_assert(loc, *expression, scope, asserts),
+        Expression::Assert(loc, expression) => run_assert(loc, *expression, scope),
         Expression::Assignment(loc, left, right) => run_assignment(loc, *left, *right, scope),
         Expression::Get(loc, expression) => run_get(loc, *expression, scope),
-        _ => RunResult::Ok(expression.eval_in_scope(scope)),
+        Expression::Primitive(.., primitive) => RunResult::Ok(primitive),
+        Expression::Equality(loc, left, right) => run_equality(loc, *left, *right, scope),
+        Expression::Ref(loc, name) => run_ref(loc, name, scope),
+    }
+}
+
+fn run_ref(location: types::Location, name: String, scope: &mut Scope) -> RunResult<Primitive> {
+    println!("run_ref\n\t{location:?}\n\t{name}\n\t{scope:?}\n---");
+    if !name.contains('.') {
+        match scope.vars.get(&name) {
+            Some(primitive) => RunResult::Ok(primitive.clone()),
+            None => todo!(),
+        }
+    } else {
+        let mut parts = name.split('.');
+        if let Some(part) = parts.next() {
+            while let Some(next) = parts.next() {
+                return match scope.vars.get(part) {
+                    Some(Primitive::Object(map)) => match map.get(next) {
+                        Some(expression) => match run_expression(expression.clone(), scope) {
+                            RunResult::Ok(primitive) => RunResult::Ok(primitive),
+                            RunResult::Err(loc, err) => RunResult::Err(loc, err),
+                        },
+                        None => todo!(),
+                    },
+                    Some(Primitive::Array(expressions)) => match next.parse::<usize>() {
+                        Ok(index) => match expressions.get(index) {
+                            Some(expression) => match run_expression(expression.clone(), scope) {
+                                RunResult::Ok(primitive) => RunResult::Ok(primitive),
+                                RunResult::Err(loc, err) => RunResult::Err(loc, err),
+                            },
+                            None => todo!(),
+                        },
+                        Err(err) => todo!(),
+                    },
+                    _ => todo!(),
+                };
+            }
+            todo!()
+        } else {
+            todo!()
+        }
     }
 }
 
@@ -278,26 +247,84 @@ fn run_assignment(
 ) -> RunResult<Primitive> {
     println!("run_assignment\n\t{location:?}\n\t{left:?}\n\t{right:?}\n\t{scope:?}\n---");
     if let Expression::Ref(.., ref name) = left {
-        let primitive = right.eval_in_scope(scope);
-        scope.set_var(name, &primitive);
-        RunResult::Ok(primitive)
+        match run_expression(right, scope) {
+            RunResult::Ok(primitive) => {
+                scope.set_var(name, &primitive);
+                RunResult::Ok(primitive)
+            }
+            RunResult::Err(loc, err) => RunResult::Err(loc, err),
+        }
     } else {
         RunResult::Err(left.loc().clone(), "Invalid assignment".to_string())
+    }
+}
+
+fn run_equality(
+    location: types::Location,
+    left: Expression,
+    right: Expression,
+    scope: &mut Scope,
+) -> RunResult<Primitive> {
+    println!("run_equality\n\t{location:?}\n\t{left:?}\n\t{right:?}\n\t{scope:?}\n---");
+    match run_expression(left, scope) {
+        RunResult::Err(loc, err) => RunResult::Err(loc, err),
+        RunResult::Ok(l) => match run_expression(right, scope) {
+            RunResult::Err(loc, err) => RunResult::Err(loc, err),
+            RunResult::Ok(r) => match l {
+                Primitive::Void => match r {
+                    Primitive::Void => RunResult::Ok(Primitive::Boolean(true)),
+                    _ => RunResult::Ok(Primitive::Boolean(false)),
+                },
+                Primitive::Boolean(a) => match r {
+                    Primitive::Boolean(b) => {
+                        if a == b {
+                            RunResult::Ok(Primitive::Boolean(true))
+                        } else {
+                            RunResult::Ok(Primitive::Boolean(false))
+                        }
+                    }
+                    _ => RunResult::Ok(Primitive::Boolean(false)),
+                },
+                Primitive::Number(a) => match r {
+                    Primitive::Number(b) => {
+                        if a == b {
+                            RunResult::Ok(Primitive::Boolean(true))
+                        } else {
+                            RunResult::Ok(Primitive::Boolean(false))
+                        }
+                    }
+                    _ => RunResult::Ok(Primitive::Boolean(false)),
+                },
+                Primitive::String(a) => match r {
+                    Primitive::String(b) => {
+                        if a == b {
+                            RunResult::Ok(Primitive::Boolean(true))
+                        } else {
+                            RunResult::Ok(Primitive::Boolean(false))
+                        }
+                    }
+                    _ => RunResult::Ok(Primitive::Boolean(false)),
+                },
+                Primitive::Object(map) => todo!(),
+                Primitive::Array(expressions) => todo!(),
+            },
+        },
     }
 }
 
 fn run_assert(
     location: types::Location,
     expression: Expression,
-    scope: &Scope,
-    asserts: &mut Vec<(types::Location, bool)>,
+    scope: &mut Scope,
 ) -> RunResult<Primitive> {
     println!("run_assert\n\t{location:?}\n\t{expression:?}\n\t{scope:?}\n---");
-    match expression.eval_in_scope(scope) {
-        Primitive::Boolean(value) => {
-            asserts.push((location.clone(), value));
+
+    match run_expression(expression, scope) {
+        RunResult::Ok(Primitive::Boolean(value)) => {
+            scope.asserts.push(Assert(location.clone(), value));
             RunResult::Ok(Primitive::Boolean(value))
         }
+        RunResult::Err(loc, err) => RunResult::Err(loc, err),
         _ => RunResult::Err(
             location,
             format!("Expected bool value as expression result for assert"),
@@ -308,17 +335,18 @@ fn run_assert(
 fn run_get(
     location: types::Location,
     expression: Expression,
-    scope: &Scope,
+    scope: &mut Scope,
 ) -> RunResult<Primitive> {
     println!("run_get\n\t{location:?}\n\t{expression:?}\n\t{scope:?}\n---");
-    match expression.eval_in_scope(scope) {
-        Primitive::String(url) => match minreq::get(url).with_timeout(5).send() {
+    match run_expression(expression, scope) {
+        RunResult::Ok(Primitive::String(url)) => match minreq::get(url).with_timeout(5).send() {
             Ok(res) => match res.as_str() {
                 Ok(body) => RunResult::Ok(Primitive::String(body.to_string())),
                 Err(err) => RunResult::Err(location, err.to_string()),
             },
             Err(err) => RunResult::Err(location, err.to_string()),
         },
+        RunResult::Err(loc, err) => RunResult::Err(loc, err),
         _ => RunResult::Err(
             location,
             format!("Expected string value as expression result for get"),
@@ -327,9 +355,11 @@ fn run_get(
 }
 
 #[test]
-fn test_scope_get_var() {
+fn test_ref() {
+    let location = types::Location("file".to_string(), 4, 3);
     let mut scope = Scope {
         vars: HashMap::new(),
+        asserts: Vec::new(),
     };
     scope
         .vars
@@ -341,15 +371,17 @@ fn test_scope_get_var() {
         Expression::Primitive(loc, Primitive::String("world".to_string())),
     );
 
-    match scope.get_var(&"bool".to_string()) {
-        Some(Primitive::Boolean(value)) => assert!(value, "expected bool value"),
+    match run_ref(location.clone(), "bool".to_string(), &mut scope) {
+        RunResult::Ok(Primitive::Boolean(value)) => assert!(value, "expected bool value"),
         _ => assert!(false, "expected bool"),
     }
 
     scope.vars.insert("obj".to_string(), Primitive::Object(map));
 
-    match scope.get_var(&"obj.hello".to_string()) {
-        Some(Primitive::String(string)) => assert_eq!(string, "world", "expected string value"),
+    match run_ref(location.clone(), "obj.hello".to_string(), &mut scope) {
+        RunResult::Ok(Primitive::String(string)) => {
+            assert_eq!(string, "world", "expected string value")
+        }
         _ => assert!(false, "expected string"),
     }
 }
@@ -365,7 +397,7 @@ fn test_assignment() {
     let mut scope = Scope::new();
     match run_assignment(loc, left, right, &mut scope) {
         RunResult::Err(..) => assert!(false, "expected run_assignment to return Ok"),
-        RunResult::Ok(..) => match scope.get_var(&"hello".to_string()) {
+        RunResult::Ok(..) => match scope.vars.get(&"hello".to_string()) {
             Some(Primitive::String(value)) => {
                 assert_eq!(
                     value.to_owned(),
@@ -393,19 +425,13 @@ fn test_assert() {
         types::Location(file.to_owned(), row, col),
         Box::new(equality),
     );
-    let scope = Scope::new();
-    let mut asserts = Vec::<(types::Location, bool)>::new();
-    match run_assert(
-        types::Location(file.clone(), row, col),
-        assert,
-        &scope,
-        &mut asserts,
-    ) {
+    let mut scope = Scope::new();
+    match run_assert(types::Location(file.clone(), row, col), assert, &mut scope) {
         RunResult::Err(..) => assert!(false, "expected run_assert to return Ok"),
         RunResult::Ok(..) => {
-            assert_eq!(asserts.len(), 1, "expected 1 run assert");
+            assert_eq!(scope.asserts.len(), 1, "expected 1 run assert");
             assert_eq!(
-                asserts.get(0).unwrap().1,
+                scope.asserts.get(0).unwrap().1,
                 true,
                 "expected assert to have succeeded"
             );
