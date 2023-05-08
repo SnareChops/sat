@@ -1,6 +1,4 @@
-use futures::executor::block_on;
 use std::{collections::HashMap, slice::IterMut};
-use tokio;
 
 use crate::types;
 
@@ -57,7 +55,7 @@ impl Expression {
             Expression::Assert(.., expression) => expression.eval_in_scope(scope),
             Expression::Assignment(.., expression) => expression.eval_in_scope(scope),
             Expression::Get(loc, expression) => {
-                match block_on(run_get(loc.clone(), *expression.clone(), scope)) {
+                match run_get(loc.clone(), *expression.clone(), scope) {
                     RunResult::Ok(primitive) => primitive,
                     RunResult::Err(loc, err) => panic!("{err}"),
                 }
@@ -211,14 +209,14 @@ impl Feedback {
     }
 }
 
-pub async fn run(mut program: Program) -> RunResult<Feedback> {
+pub fn run(mut program: Program) -> RunResult<Feedback> {
     println!("run {program:?}\n---");
     let declarations = program.declarations.iter_mut();
     let ref mut feedback = Feedback::new();
     for declaration in declarations {
         match declaration {
             Declaration::Test(loc, name, ref mut block) => {
-                match run_test(feedback, loc.clone(), name.clone(), block).await {
+                match run_test(feedback, loc.clone(), name.clone(), block) {
                     RunResult::Err(loc, err) => return RunResult::Err(loc, err),
                     RunResult::Ok(..) => (),
                 }
@@ -228,7 +226,7 @@ pub async fn run(mut program: Program) -> RunResult<Feedback> {
     RunResult::Ok(feedback.clone())
 }
 
-async fn run_test(
+fn run_test(
     feedback: &mut Feedback,
     location: types::Location,
     name: String,
@@ -238,7 +236,7 @@ async fn run_test(
     let Block(.., expressions, scope) = block;
     let mut asserts = Vec::<(types::Location, bool)>::new();
     for expression in expressions.iter() {
-        match run_expression(location.clone(), expression.clone(), scope, &mut asserts).await {
+        match run_expression(location.clone(), expression.clone(), scope, &mut asserts) {
             RunResult::Err(loc, err) => return RunResult::Err(loc, err),
             RunResult::Ok(..) => (),
         }
@@ -257,7 +255,7 @@ async fn run_test(
     return RunResult::Ok(());
 }
 
-async fn run_expression(
+fn run_expression(
     location: types::Location,
     expression: Expression,
     scope: &mut Scope,
@@ -265,14 +263,14 @@ async fn run_expression(
 ) -> RunResult<Primitive> {
     println!("run_expression\n\t{location:?}\n\t{expression:?}\n\t{scope:?}\n---");
     match expression {
-        Expression::Assert(loc, expression) => run_assert(loc, *expression, scope, asserts).await,
-        Expression::Assignment(loc, left, right) => run_assignment(loc, *left, *right, scope).await,
-        Expression::Get(loc, expression) => run_get(loc, *expression, scope).await,
+        Expression::Assert(loc, expression) => run_assert(loc, *expression, scope, asserts),
+        Expression::Assignment(loc, left, right) => run_assignment(loc, *left, *right, scope),
+        Expression::Get(loc, expression) => run_get(loc, *expression, scope),
         _ => RunResult::Ok(expression.eval_in_scope(scope)),
     }
 }
 
-async fn run_assignment(
+fn run_assignment(
     location: types::Location,
     left: Expression,
     right: Expression,
@@ -288,7 +286,7 @@ async fn run_assignment(
     }
 }
 
-async fn run_assert(
+fn run_assert(
     location: types::Location,
     expression: Expression,
     scope: &Scope,
@@ -307,16 +305,16 @@ async fn run_assert(
     }
 }
 
-async fn run_get(
+fn run_get(
     location: types::Location,
     expression: Expression,
     scope: &Scope,
 ) -> RunResult<Primitive> {
     println!("run_get\n\t{location:?}\n\t{expression:?}\n\t{scope:?}\n---");
     match expression.eval_in_scope(scope) {
-        Primitive::String(url) => match reqwest::get(url).await {
-            Ok(res) => match res.text().await {
-                Ok(body) => RunResult::Ok(Primitive::String(body)),
+        Primitive::String(url) => match minreq::get(url).with_timeout(5).send() {
+            Ok(res) => match res.as_str() {
+                Ok(body) => RunResult::Ok(Primitive::String(body.to_string())),
                 Err(err) => RunResult::Err(location, err.to_string()),
             },
             Err(err) => RunResult::Err(location, err.to_string()),
@@ -356,8 +354,8 @@ fn test_scope_get_var() {
     }
 }
 
-#[tokio::test]
-async fn test_assignment() {
+#[test]
+fn test_assignment() {
     let file = "file".to_string();
     let row = 4;
     let col = 7;
@@ -365,7 +363,7 @@ async fn test_assignment() {
     let left = Expression::Ref(loc.clone(), "hello".to_string());
     let right = Expression::Primitive(loc.clone(), Primitive::String("world".to_string()));
     let mut scope = Scope::new();
-    match run_assignment(loc, left, right, &mut scope).await {
+    match run_assignment(loc, left, right, &mut scope) {
         RunResult::Err(..) => assert!(false, "expected run_assignment to return Ok"),
         RunResult::Ok(..) => match scope.get_var(&"hello".to_string()) {
             Some(Primitive::String(value)) => {
@@ -379,9 +377,8 @@ async fn test_assignment() {
         },
     }
 }
-
-#[tokio::test]
-async fn test_assert() {
+#[test]
+fn test_assert() {
     let file = "file".to_string();
     let row = 3;
     let col = 5;
@@ -403,9 +400,7 @@ async fn test_assert() {
         assert,
         &scope,
         &mut asserts,
-    )
-    .await
-    {
+    ) {
         RunResult::Err(..) => assert!(false, "expected run_assert to return Ok"),
         RunResult::Ok(..) => {
             assert_eq!(asserts.len(), 1, "expected 1 run assert");
