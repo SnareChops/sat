@@ -12,6 +12,7 @@ test "simple test" {
     num = 1
     assert : num == 1
 
-    val = get : "http://localhost:8080/string"
-    assert : val == "test-string"
+    status, body = get : "http://localhost:8080/string"
+    assert : status == 200
+    assert : body == "test-string"
 }

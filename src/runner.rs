@@ -45,17 +45,23 @@ pub enum Expression {
     Assignment(types::Location, Box<Expression>, Box<Expression>),
     Equality(types::Location, Box<Expression>, Box<Expression>),
     Ref(types::Location, String),
+    // Complex
+    MultiRef(types::Location, Vec<Expression>),
     // Http
     Get(types::Location, Box<Expression>),
 }
 impl Expression {
     pub fn loc(&self) -> types::Location {
         match self {
+            // Basics
             Expression::Assert(loc, ..) => loc.clone(),
             Expression::Assignment(loc, ..) => loc.clone(),
             Expression::Equality(loc, ..) => loc.clone(),
             Expression::Primitive(loc, ..) => loc.clone(),
             Expression::Ref(loc, ..) => loc.clone(),
+            // Complex
+            Expression::MultiRef(loc, ..) => loc.clone(),
+            // Http
             Expression::Get(loc, ..) => loc.clone(),
         }
     }
@@ -63,12 +69,15 @@ impl Expression {
 
 #[derive(Debug, Clone)]
 pub enum Primitive {
+    // Basics
     Void,
     Boolean(bool),
     Number(f32),
     String(String),
     Object(HashMap<String, Expression>),
     Array(Vec<Expression>),
+    // Complex
+    Multi(Vec<Primitive>),
 }
 
 #[derive(Debug, Clone)]
@@ -197,6 +206,7 @@ fn run_expression(expression: Expression, scope: &mut Scope) -> RunResult<Primit
         Expression::Primitive(.., primitive) => RunResult::Ok(primitive),
         Expression::Equality(loc, left, right) => run_equality(loc, *left, *right, scope),
         Expression::Ref(loc, name) => run_ref(loc, name, scope),
+        Expression::MultiRef(..) => todo!(),
     }
 }
 
@@ -246,16 +256,45 @@ fn run_assignment(
     scope: &mut Scope,
 ) -> RunResult<Primitive> {
     println!("run_assignment\n\t{location:?}\n\t{left:?}\n\t{right:?}\n\t{scope:?}\n---");
-    if let Expression::Ref(.., ref name) = left {
-        match run_expression(right, scope) {
+    match left {
+        Expression::Ref(.., ref name) => match run_expression(right, scope) {
             RunResult::Ok(primitive) => {
                 scope.set_var(name, &primitive);
                 RunResult::Ok(primitive)
             }
             RunResult::Err(loc, err) => RunResult::Err(loc, err),
-        }
-    } else {
-        RunResult::Err(left.loc().clone(), "Invalid assignment".to_string())
+        },
+        Expression::MultiRef(.., ref refs) => match run_expression(right.clone(), scope) {
+            RunResult::Ok(primitive) => match primitive {
+                Primitive::Multi(primitives) => {
+                    if refs.len() > primitives.len() {
+                        RunResult::Err(
+                            left.loc().clone(),
+                            "Expression returns fewer values than variables specified".to_owned(),
+                        )
+                    } else {
+                        let mut iter = refs.iter();
+                        let mut prims = primitives.iter();
+                        while let Some(Expression::Ref(.., name)) = iter.next() {
+                            match prims.next() {
+                                Some(primitive) => scope.set_var(&name, primitive),
+                                None => todo!(),
+                            }
+                        }
+                        match primitives.first() {
+                            Some(primitive) => RunResult::Ok(primitive.clone()),
+                            None => RunResult::Ok(Primitive::Void),
+                        }
+                    }
+                }
+                _ => RunResult::Err(
+                    right.loc().clone(),
+                    "Expected multi value expression".to_owned(),
+                ),
+            },
+            RunResult::Err(loc, err) => RunResult::Err(loc, err),
+        },
+        _ => RunResult::Err(left.loc().clone(), "Invalid assignment".to_owned()),
     }
 }
 
@@ -305,8 +344,9 @@ fn run_equality(
                     }
                     _ => RunResult::Ok(Primitive::Boolean(false)),
                 },
-                Primitive::Object(map) => todo!(),
-                Primitive::Array(expressions) => todo!(),
+                Primitive::Object(..) => todo!(),
+                Primitive::Array(..) => todo!(),
+                Primitive::Multi(..) => todo!(),
             },
         },
     }
@@ -341,7 +381,10 @@ fn run_get(
     match run_expression(expression, scope) {
         RunResult::Ok(Primitive::String(url)) => match minreq::get(url).with_timeout(5).send() {
             Ok(res) => match res.as_str() {
-                Ok(body) => RunResult::Ok(Primitive::String(body.to_string())),
+                Ok(body) => RunResult::Ok(Primitive::Multi(vec![
+                    Primitive::Number(res.status_code as f32),
+                    Primitive::String(body.to_string()),
+                ])),
                 Err(err) => RunResult::Err(location, err.to_string()),
             },
             Err(err) => RunResult::Err(location, err.to_string()),

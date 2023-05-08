@@ -18,6 +18,7 @@ pub enum Token {
     Array(types::Location, Vec<Tokens>),
     Special(types::Location, Special),
     Pipe(types::Location, Tokens),
+    Comma(types::Location),
     Dot(types::Location),
     Eol(types::Location),
 }
@@ -32,6 +33,7 @@ impl Token {
             Token::Array(loc, ..) => loc.clone(),
             Token::Special(loc, ..) => loc.clone(),
             Token::Pipe(loc, ..) => loc.clone(),
+            Token::Comma(loc, ..) => loc.clone(),
             Token::Dot(loc) => loc.clone(),
             Token::Eol(loc) => loc.clone(),
         }
@@ -165,6 +167,8 @@ fn parse_expression(tokens: &mut Tokens) -> ParseResult<runner::Expression> {
             Some(Token::Symbol(loc, symbol)) => {
                 if let Some(Token::Dot(..)) = tokens.peek_at(1) {
                     parse_ref(tokens)
+                } else if let Some(Token::Comma(..)) = tokens.peek_at(1) {
+                    parse_multi_ref(tokens)
                 } else {
                     match symbol.as_str() {
                         "true" => {
@@ -252,6 +256,25 @@ fn parse_ref(tokens: &mut Tokens) -> ParseResult<runner::Expression> {
         }
     }
     ParseResult::Ok(runner::Expression::Ref(loc, symbol))
+}
+
+fn parse_multi_ref(tokens: &mut Tokens) -> ParseResult<runner::Expression> {
+    println!("parse_multi_ref\n\t{tokens:?}\n---");
+    let loc = tokens.peek().unwrap().loc();
+    let mut refs = Vec::<runner::Expression>::new();
+    while let Some(token) = tokens.peek() {
+        match token {
+            Token::Comma(..) => {
+                tokens.take();
+            }
+            Token::Symbol(..) => match parse_ref(tokens) {
+                ParseResult::Ok(expression) => refs.push(expression),
+                ParseResult::Err(loc, err) => return ParseResult::Err(loc, err),
+            },
+            _ => return ParseResult::Ok(runner::Expression::MultiRef(loc, refs)),
+        }
+    }
+    ParseResult::Ok(runner::Expression::MultiRef(loc, refs))
 }
 
 fn parse_object(

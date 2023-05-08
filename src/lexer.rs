@@ -89,6 +89,10 @@ fn lex_until(mut reader: &mut Reader, until: Option<Vec<char>>) -> (parser::Toke
         } else if rune == '.' {
             reader.take();
             tokens.add(parser::Token::Dot(reader.loc()));
+        // ,
+        } else if rune == ',' {
+            reader.take();
+            tokens.add(parser::Token::Comma(reader.loc()));
         // "
         } else if rune == '"' {
             if let Some(token) = lex_string(&mut reader) {
