@@ -1,3 +1,7 @@
+run_code = run : "ls"
+
+code = spawn : "cd ~/repos/service && docker compose up"
+
 test "simple test" {
     assert : true
     bool = true
@@ -16,3 +20,5 @@ test "simple test" {
     assert : status == 200
     assert : body == "test-string"
 }
+
+kill : code
