@@ -50,6 +50,9 @@ func parse_symbol(tokens *token.Tokens, scope *types.Scope) (types.Expression, e
 	case "kill":
 		tokens.Advance()
 		return parse_kill(symbol.Loc, tokens, scope)
+	case "healthcheck":
+		tokens.Advance()
+		return parse_healthcheck(symbol.Loc, tokens, scope)
 	default:
 		return parse_ref(tokens)
 	}

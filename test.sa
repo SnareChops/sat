@@ -1,6 +1,7 @@
 run_code = run : "ls"
 
-code = spawn : "cd ~/repos/service && docker compose up"
+code = spawn : "cd ~/repos/service && go run ."
+healthcheck : "http://localhost:8080/string"
 
 test "simple test" {
     assert : true

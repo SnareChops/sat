@@ -165,6 +165,19 @@ func (self Kill) Debug(i int) string {
 	return fmt.Sprintf("%sKill(%s\n%s\n%s)", indent(i), self.Loc.ToString(), self.Handle.Debug(i+1), indent(i))
 }
 
+type Healthcheck struct {
+	Loc types.Location
+	Url types.Expression
+}
+
+func (self Healthcheck) Location() types.Location {
+	return self.Loc
+}
+
+func (self Healthcheck) Debug(i int) string {
+	return fmt.Sprintf("%sHealthcheck(%s\n%s\n%s)", indent(i), self.Loc.ToString(), self.Url.Debug(i+1), indent(i))
+}
+
 // ////////////////////
 type Block struct {
 	Loc      types.Location
