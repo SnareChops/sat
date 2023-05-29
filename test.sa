@@ -22,4 +22,16 @@ test "simple test" {
     assert : body == "test-string"
 }
 
+test "object" {
+    status, body = get : "http://localhost:8080/object"
+    assert : status == 200
+    assert : body == {name: "Fred", age: 20}
+}
+
+test "array" {
+    status, body = get : "http://localhost:8080/array"
+    assert : status == 200
+    assert : body == ["hello", "from", "the", "outside"]
+}
+
 kill : code
